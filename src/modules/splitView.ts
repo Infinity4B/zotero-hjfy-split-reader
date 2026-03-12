@@ -71,6 +71,11 @@ interface SplitTabState {
   dragOverlay?: HTMLElement | null;
 }
 
+interface OpenSplitViewOptions {
+  primarySide?: "left" | "right";
+  activeSide?: "left" | "right";
+}
+
 /** Command id for the Split-View Reader prompt command; used for unregister to avoid leaks. */
 const SPLIT_VIEW_PROMPT_COMMAND_ID = "split-view-reader";
 
@@ -780,6 +785,7 @@ export class SplitViewFactory {
   static async openItemsInSplitView(
     leftPDF: Zotero.Item,
     rightPDF: Zotero.Item,
+    options: OpenSplitViewOptions = {},
   ) {
     if (
       !leftPDF?.isFileAttachment?.() ||
@@ -807,6 +813,26 @@ export class SplitViewFactory {
     }
 
     await this.convertToSplitView(reader, rightPDF);
+
+    const state = this.stateMap.get(reader.tabID);
+    if (!state || state.isCleaningUp) return;
+
+    if (options.primarySide && options.primarySide !== state.primarySide) {
+      this.setPrimarySide(reader.tabID, options.primarySide);
+    }
+
+    if (options.activeSide && options.activeSide !== state.activeSide) {
+      state.activeSide = options.activeSide;
+      const targetParentItemID =
+        options.activeSide === "right"
+          ? state.rightParentItemID
+          : state.leftParentItemID;
+      this.updateContextPane(
+        reader.tabID,
+        Zotero.getMainWindow(),
+        targetParentItemID,
+      );
+    }
   }
 
   /**
@@ -4093,6 +4119,9 @@ export class SplitViewFactory {
       const makeScrollHandler = (sourceSide: "left" | "right") => () => {
         const s = self.stateMap.get(tabID);
         if (!s || s.isCleaningUp || s.scrollSyncRAFPending || s.syncPaused) {
+          return;
+        }
+        if (sourceSide !== s.primarySide) {
           return;
         }
 

@@ -92,7 +92,10 @@ export class HJFYSplitFactory {
         type: "default",
         progress: 90,
       });
-      await SplitViewFactory.openItemsInSplitView(sourcePDF, translatedPDF);
+      await SplitViewFactory.openItemsInSplitView(sourcePDF, translatedPDF, {
+        primarySide: "right",
+        activeSide: "right",
+      });
       popup.createLine({
         text: "已在分屏阅读器中打开原文与幻觉翻译",
         type: "success",
