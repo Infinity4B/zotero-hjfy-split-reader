@@ -61,7 +61,6 @@ Build output is written to `.scaffold/build/`, including:
 
 - `.scaffold/build/hjfy-split-reader.xpi`
 - `.scaffold/build/update.json`
-- `.scaffold/build/update-beta.json`
 
 ## Third-Party Notices
 

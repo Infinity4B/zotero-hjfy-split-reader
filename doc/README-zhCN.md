@@ -59,7 +59,6 @@ npm run lint:check
 
 - `.scaffold/build/hjfy-split-reader.xpi`
 - `.scaffold/build/update.json`
-- `.scaffold/build/update-beta.json`
 
 ## 第三方来源与许可
 
