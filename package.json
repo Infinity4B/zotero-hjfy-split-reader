@@ -1,24 +1,24 @@
 {
-  "name": "zotero-plugin-template",
+  "name": "zotero-hjfy-split-reader",
   "type": "module",
-  "version": "3.1.0",
-  "description": "Zotero Plugin Template",
+  "version": "0.1.0-beta.1",
+  "description": "Fetch HJFY translations for papers and open them in a split-view reader",
   "config": {
-    "addonName": "Zotero Plugin Template",
-    "addonID": "addontemplate@euclpts.com",
-    "addonRef": "addontemplate",
-    "addonInstance": "AddonTemplate",
-    "prefsPrefix": "extensions.zotero.addontemplate"
+    "addonName": "HJFY Split Reader",
+    "addonID": "zotero-hjfy-split-reader@infinity4b.github.io",
+    "addonRef": "zotero-hjfy-split-reader",
+    "addonInstance": "ZoteroHJFYSplitReader",
+    "prefsPrefix": "extensions.zotero.hjfySplitReader"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/windingwind/zotero-plugin-template.git"
+    "url": "git+https://github.com/Infinity4B/zotero-hjfy-split-reader.git"
   },
-  "author": "windingwind",
+  "author": "4b",
   "bugs": {
-    "url": "https://github.com/windingwind/zotero-plugin-template/issues"
+    "url": "https://github.com/Infinity4B/zotero-hjfy-split-reader/issues"
   },
-  "homepage": "https://github.com/windingwind/zotero-plugin-template#readme",
+  "homepage": "https://github.com/Infinity4B/zotero-hjfy-split-reader#readme",
   "license": "AGPL-3.0-or-later",
   "scripts": {
     "start": "zotero-plugin serve",

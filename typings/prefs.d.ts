@@ -7,8 +7,11 @@
 declare namespace _ZoteroTypes {
   interface Prefs {
     PluginPrefsMap: {
-      "enable": boolean;
-      "input": string;
+      "followFocusPrimary": boolean;
+      "syncEnabled": boolean;
+      "primaryScrollbarR": number;
+      "primaryScrollbarG": number;
+      "primaryScrollbarB": number;
     };
   }
 }

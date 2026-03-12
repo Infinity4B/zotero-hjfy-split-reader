@@ -4,30 +4,107 @@
 <groupbox
   onload="Zotero.__addonInstance__.hooks.onPrefsEvent('load', { window })"
 >
-  <label><html:h2 data-l10n-id="pref-title"></html:h2></label>
+  <!-- Basic Settings -->
+  <label>
+    <html:h2
+      data-l10n-id="pref-section-basic"
+      style="margin: 20px 0 8px 0"
+    ></html:h2>
+  </label>
   <checkbox
-    id="zotero-prefpane-__addonRef__-enable"
-    preference="enable"
-    data-l10n-id="pref-enable"
+    id="zotero-prefpane-__addonRef__-follow-focus"
+    preference="followFocusPrimary"
+    data-l10n-id="pref-follow-focus"
+    style="margin-top: 0"
   />
-  <hbox>
-    <html:label
-      for="zotero-prefpane-__addonRef__-input"
-      data-l10n-id="pref-input"
-    ></html:label>
-    <html:input
-      type="text"
-      id="zotero-prefpane-__addonRef__-input"
-      preference="input"
-    ></html:input>
-  </hbox>
-  <hbox class="virtualized-table-container" flex="1" height="300px">
-    <html:div id="__addonRef__-table-container" />
-  </hbox>
+  <description
+    data-l10n-id="pref-follow-focus-desc"
+    style="font-size: 0.9em; opacity: 0.7; margin: 2px 0 8px 24px"
+  />
+  <checkbox
+    id="zotero-prefpane-__addonRef__-sync-enabled"
+    preference="syncEnabled"
+    data-l10n-id="pref-sync-enabled"
+  />
+  <description
+    data-l10n-id="pref-sync-enabled-desc"
+    style="font-size: 0.9em; opacity: 0.7; margin: 2px 0 8px 24px"
+  />
 </groupbox>
-<vbox>
-  <html:label
-    data-l10n-id="pref-help"
-    data-l10n-args='{"time": "__buildTime__","name": "__addonName__","version":"__buildVersion__"}'
-  ></html:label>
-</vbox>
+
+<groupbox>
+  <!-- Appearance Settings -->
+  <label>
+    <html:h2
+      data-l10n-id="pref-section-appearance"
+      style="margin: 20px 0 0px 0"
+    ></html:h2>
+  </label>
+  <hbox align="center" style="margin-top: 0">
+    <html:label
+      data-l10n-id="pref-scrollbar-color"
+      style="margin-right: 8px"
+    ></html:label>
+    <html:span style="margin-right: 4px">R</html:span>
+    <html:input
+      type="number"
+      id="zotero-prefpane-__addonRef__-scrollbar-r"
+      min="0"
+      max="255"
+      preference="primaryScrollbarR"
+      style="width: 60px; margin-right: 8px"
+    />
+    <html:span style="margin-right: 4px">G</html:span>
+    <html:input
+      type="number"
+      id="zotero-prefpane-__addonRef__-scrollbar-g"
+      min="0"
+      max="255"
+      preference="primaryScrollbarG"
+      style="width: 60px; margin-right: 8px"
+    />
+    <html:span style="margin-right: 4px">B</html:span>
+    <html:input
+      type="number"
+      id="zotero-prefpane-__addonRef__-scrollbar-b"
+      min="0"
+      max="255"
+      preference="primaryScrollbarB"
+      style="width: 60px; margin-right: 8px"
+    />
+    <html:div
+      id="zotero-prefpane-__addonRef__-color-preview"
+      style="
+        width: 20px;
+        height: 20px;
+        border: 1px solid #ccc;
+        border-radius: 5px;
+        margin-left: 4px;
+      "
+    />
+  </hbox>
+  <description
+    data-l10n-id="pref-scrollbar-color-desc"
+    style="font-size: 0.9em; opacity: 0.7; margin: 2px 0 8px 0"
+  />
+</groupbox>
+
+<groupbox>
+  <!-- About -->
+  <label>
+    <html:h2
+      data-l10n-id="pref-section-about"
+      style="margin: 20px 0 8px 0"
+    ></html:h2>
+  </label>
+  <description data-l10n-id="pref-about-desc" style="margin: 0 0 8px 0" />
+  <html:a
+    href="https://github.com/Infinity4B/zotero-hjfy-split-reader"
+    style="text-decoration: none; cursor: pointer"
+    onclick="
+      Zotero.launchURL(this.href);
+      event.preventDefault();
+    "
+    >⭐ Star it on GitHub</html:a
+  >
+</groupbox>
