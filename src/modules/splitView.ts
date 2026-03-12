@@ -33,8 +33,10 @@ interface SplitTabState {
   syncEnabled: boolean;
   primarySide: "left" | "right";
   activeSide: "left" | "right";
-  scrollHandler: (() => void) | null;
-  lastPrimaryScroll: { top: number; left: number } | null;
+  leftScrollHandler: (() => void) | null;
+  rightScrollHandler: (() => void) | null;
+  lastLeftScroll: { top: number; left: number } | null;
+  lastRightScroll: { top: number; left: number } | null;
   syncPaused: boolean;
   sidebarToggleTimers: number[];
   ctrlPressed: boolean;
@@ -706,7 +708,8 @@ export class SplitViewFactory {
             this.startSyncPolling(tabID);
           } else {
             this.stopSyncPolling(tabID);
-            state.lastPrimaryScroll = null;
+            state.lastLeftScroll = null;
+            state.lastRightScroll = null;
           }
           this.updateTabDataForSession(tabID);
         }
@@ -1779,8 +1782,10 @@ export class SplitViewFactory {
       syncEnabled: getPref("syncEnabled") !== false,
       primarySide: "left",
       activeSide: "left",
-      scrollHandler: null,
-      lastPrimaryScroll: null,
+      leftScrollHandler: null,
+      rightScrollHandler: null,
+      lastLeftScroll: null,
+      lastRightScroll: null,
       syncPaused: false,
       sidebarToggleTimers: [],
       ctrlPressed: false,
@@ -2114,8 +2119,10 @@ export class SplitViewFactory {
       syncEnabled: getPref("syncEnabled") !== false,
       primarySide: "left",
       activeSide: "left",
-      scrollHandler: null,
-      lastPrimaryScroll: null,
+      leftScrollHandler: null,
+      rightScrollHandler: null,
+      lastLeftScroll: null,
+      lastRightScroll: null,
       syncPaused: false,
       sidebarToggleTimers: [],
       ctrlPressed: false,
@@ -2392,7 +2399,8 @@ export class SplitViewFactory {
       this.startSyncPolling(tabID);
     } else {
       this.stopSyncPolling(tabID);
-      state.lastPrimaryScroll = null;
+      state.lastLeftScroll = null;
+      state.lastRightScroll = null;
     }
 
     // Save sync state to tab data for session restore
@@ -2413,7 +2421,7 @@ export class SplitViewFactory {
   }
 
   /**
-   * Initialize sync state - record primary's current position
+   * Initialize sync state - record both panes' current positions
    */
   private static initSyncState(tabID: string) {
     const state = this.stateMap.get(tabID);
@@ -2424,15 +2432,17 @@ export class SplitViewFactory {
       // (e.g. after primary side switch or browser replacement)
       this.cacheViewerContainers(tabID);
 
-      const primaryContainer =
-        state.primarySide === "left"
-          ? state.leftViewerContainer
-          : state.rightViewerContainer;
+      if (state.leftViewerContainer) {
+        state.lastLeftScroll = {
+          top: state.leftViewerContainer.scrollTop,
+          left: state.leftViewerContainer.scrollLeft,
+        };
+      }
 
-      if (primaryContainer) {
-        state.lastPrimaryScroll = {
-          top: primaryContainer.scrollTop,
-          left: primaryContainer.scrollLeft,
+      if (state.rightViewerContainer) {
+        state.lastRightScroll = {
+          top: state.rightViewerContainer.scrollTop,
+          left: state.rightViewerContainer.scrollLeft,
         };
       }
     } catch (e) {
@@ -2806,7 +2816,7 @@ export class SplitViewFactory {
         if (s) {
           s.zoomingCount = Math.max(0, s.zoomingCount - 1);
           // Reinitialize sync state after zoom completes
-          // This updates lastPrimaryScroll to current position
+          // This updates both panes' baseline scroll positions
           if (s.zoomingCount === 0) {
             this.initSyncState(tabID);
           }
@@ -4066,12 +4076,13 @@ export class SplitViewFactory {
     if (!state || state.isCleaningUp) return;
 
     try {
-      const primaryBrowser =
-        state.primarySide === "left" ? state.leftBrowser : state.rightBrowser;
-
-      const primaryContainer =
-        this.getViewerContainerFromBrowser(primaryBrowser);
-      if (!primaryContainer) return;
+      const leftContainer = this.getViewerContainerFromBrowser(
+        state.leftBrowser,
+      );
+      const rightContainer = this.getViewerContainerFromBrowser(
+        state.rightBrowser,
+      );
+      if (!leftContainer || !rightContainer) return;
 
       // eslint-disable-next-line @typescript-eslint/no-this-alias
       const self = this;
@@ -4079,9 +4090,11 @@ export class SplitViewFactory {
       // Minimum interval between scroll syncs (ms) for throttling
       const SCROLL_SYNC_MIN_INTERVAL = 16; // ~60fps
 
-      state.scrollHandler = () => {
+      const makeScrollHandler = (sourceSide: "left" | "right") => () => {
         const s = self.stateMap.get(tabID);
-        if (!s || s.isCleaningUp || s.scrollSyncRAFPending) return;
+        if (!s || s.isCleaningUp || s.scrollSyncRAFPending || s.syncPaused) {
+          return;
+        }
 
         // Time-based throttling: skip if last sync was too recent
         const now = Date.now();
@@ -4093,10 +4106,17 @@ export class SplitViewFactory {
           if (!s2 || s2.isCleaningUp) return;
           s2.scrollSyncRAFPending = false;
           s2.lastScrollSyncTime = Date.now();
-          self.syncViews(tabID);
+          self.syncViews(tabID, sourceSide);
         });
       };
-      primaryContainer.addEventListener("scroll", state.scrollHandler, {
+
+      state.leftScrollHandler = makeScrollHandler("left");
+      state.rightScrollHandler = makeScrollHandler("right");
+
+      leftContainer.addEventListener("scroll", state.leftScrollHandler, {
+        passive: true,
+      });
+      rightContainer.addEventListener("scroll", state.rightScrollHandler, {
         passive: true,
       });
     } catch (e) {
@@ -4113,21 +4133,29 @@ export class SplitViewFactory {
     const state = this.stateMap.get(tabID);
     if (!state) return;
 
-    // Remove scroll listener
-    if (state.scrollHandler) {
-      try {
-        const primaryBrowser =
-          state.primarySide === "left" ? state.leftBrowser : state.rightBrowser;
-        const primaryContainer =
-          this.getViewerContainerFromBrowser(primaryBrowser);
-        if (primaryContainer) {
-          primaryContainer.removeEventListener("scroll", state.scrollHandler);
-        }
-      } catch {
-        // Browser may be dead
+    // Remove scroll listeners
+    try {
+      const leftContainer = this.getViewerContainerFromBrowser(
+        state.leftBrowser,
+      );
+      if (leftContainer && state.leftScrollHandler) {
+        leftContainer.removeEventListener("scroll", state.leftScrollHandler);
       }
-      state.scrollHandler = null;
+    } catch {
+      // Browser may be dead
     }
+    try {
+      const rightContainer = this.getViewerContainerFromBrowser(
+        state.rightBrowser,
+      );
+      if (rightContainer && state.rightScrollHandler) {
+        rightContainer.removeEventListener("scroll", state.rightScrollHandler);
+      }
+    } catch {
+      // Browser may be dead
+    }
+    state.leftScrollHandler = null;
+    state.rightScrollHandler = null;
     // Cancel any pending rAF
     state.scrollSyncRAFPending = false;
   }
@@ -4139,45 +4167,81 @@ export class SplitViewFactory {
    * Called once per animation frame (via rAF) to batch scroll events.
    * Uses cached viewer containers and delta-based scrolling for performance.
    */
-  private static syncViews(tabID: string) {
+  private static syncViews(tabID: string, sourceSide: "left" | "right") {
     const state = this.stateMap.get(tabID);
     if (!state || state.isCleaningUp) return;
-    if (!state.lastPrimaryScroll) return;
     if (state.syncPaused) return;
     if (state.ctrlPressed) return;
     if (state.zoomingCount > 0) return;
 
     try {
-      const primaryContainer =
-        state.primarySide === "left"
+      const sourceContainer =
+        sourceSide === "left"
           ? state.leftViewerContainer
           : state.rightViewerContainer;
-      const secondaryContainer =
-        state.primarySide === "left"
+      const targetContainer =
+        sourceSide === "left"
           ? state.rightViewerContainer
           : state.leftViewerContainer;
+      const lastSourceScroll =
+        sourceSide === "left" ? state.lastLeftScroll : state.lastRightScroll;
 
-      if (!primaryContainer || !secondaryContainer) return;
+      if (!sourceContainer || !targetContainer || !lastSourceScroll) return;
 
-      // Read primary scroll position once
-      const primaryTop = primaryContainer.scrollTop;
-      const primaryLeft = primaryContainer.scrollLeft;
-
-      const deltaTop = primaryTop - state.lastPrimaryScroll.top;
-      const deltaLeft = primaryLeft - state.lastPrimaryScroll.left;
+      const sourceTop = sourceContainer.scrollTop;
+      const sourceLeft = sourceContainer.scrollLeft;
+      const deltaTop = sourceTop - lastSourceScroll.top;
+      const deltaLeft = sourceLeft - lastSourceScroll.left;
 
       if (
         Math.abs(deltaTop) >= this.SYNC_THRESHOLD ||
         Math.abs(deltaLeft) >= this.SYNC_THRESHOLD
       ) {
-        // Single write: use scrollTo for atomic position update
-        const newTop = Math.max(0, secondaryContainer.scrollTop + deltaTop);
-        const newLeft = Math.max(0, secondaryContainer.scrollLeft + deltaLeft);
-        secondaryContainer.scrollTo(newLeft, newTop);
+        const win = Zotero.getMainWindow();
+        const newTop = Math.max(0, targetContainer.scrollTop + deltaTop);
+        const newLeft = Math.max(0, targetContainer.scrollLeft + deltaLeft);
 
-        state.lastPrimaryScroll = {
-          top: primaryTop,
-          left: primaryLeft,
+        state.syncPaused = true;
+        targetContainer.scrollTo(newLeft, newTop);
+
+        if (sourceSide === "left") {
+          state.lastLeftScroll = {
+            top: sourceTop,
+            left: sourceLeft,
+          };
+          state.lastRightScroll = {
+            top: newTop,
+            left: newLeft,
+          };
+        } else {
+          state.lastRightScroll = {
+            top: sourceTop,
+            left: sourceLeft,
+          };
+          state.lastLeftScroll = {
+            top: newTop,
+            left: newLeft,
+          };
+        }
+
+        win.requestAnimationFrame(() => {
+          const s = this.stateMap.get(tabID);
+          if (s && !s.isCleaningUp) {
+            s.syncPaused = false;
+          }
+        });
+        return;
+      }
+
+      if (sourceSide === "left") {
+        state.lastLeftScroll = {
+          top: sourceTop,
+          left: sourceLeft,
+        };
+      } else {
+        state.lastRightScroll = {
+          top: sourceTop,
+          left: sourceLeft,
         };
       }
     } catch (e) {
