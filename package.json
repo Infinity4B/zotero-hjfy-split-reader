@@ -25,6 +25,7 @@
     "build": "zotero-plugin build && tsc --noEmit",
     "lint:check": "prettier --check . && eslint .",
     "lint:fix": "prettier --write . && eslint . --fix",
+    "release:check": "npm run lint:check && npm run build",
     "release": "zotero-plugin release",
     "test": "zotero-plugin test",
     "update-deps": "npm update --save"

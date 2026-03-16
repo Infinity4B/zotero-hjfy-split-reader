@@ -70,12 +70,52 @@ npm start
 ```bash
 npm run build
 npm run lint:check
+npm run release:check
 ```
 
 构建输出位于 `.scaffold/build/`，包括：
 
 - `.scaffold/build/hjfy-split-reader.xpi`
 - `.scaffold/build/update.json`
+
+## 发版流程
+
+为了避免“tag 已经推上去，CI 才发现 lint/build 问题”的情况，推荐固定按下面顺序发版：
+
+1. 完成功能修改后，先运行：
+
+```bash
+npm run release:check
+```
+
+2. 确认本地 `lint + build` 都通过后，再更新 `package.json` 与 `package-lock.json` 中的版本号。
+3. 重新执行一次 `npm run build`，确认产物版本正确。
+4. 提交版本改动：
+
+```bash
+git add package.json package-lock.json <other changed files>
+git commit -m "Release x.y.z"
+```
+
+5. 先推送分支，再确认 GitHub Actions 的 `CI` 成功：
+
+```bash
+git push origin main
+```
+
+6. 确认 `CI` 中的 `lint`、`build`、`test` 全部通过后，最后再打 tag 并推送：
+
+```bash
+git tag vx.y.z
+git push origin vx.y.z
+```
+
+说明：
+
+- `.github/workflows/ci.yml` 会在 `main` 的 push 上运行 lint、build、test。
+- `.github/workflows/release.yml` 是由 `v*` tag 触发的，所以 tag 必须放在最后一步。
+- `npm run test` 本地依赖可用的 Zotero 测试环境；如果本机没有 Zotero，就以 GitHub Actions 中的 `test` 结果为准。
+- 如果只是格式问题，先运行 `npx prettier --write .` 或 `npm run lint:fix`，再重新检查。
 
 ## 第三方来源与许可
 

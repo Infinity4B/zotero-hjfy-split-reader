@@ -154,7 +154,9 @@ export class SplitViewFactory {
   ): string {
     const leftTitle = this.getTabTitleForItem(leftItem);
     const rightTitle = this.getTabTitleForItem(rightItem);
-    return leftTitle === rightTitle ? leftTitle : `${leftTitle} | ${rightTitle}`;
+    return leftTitle === rightTitle
+      ? leftTitle
+      : `${leftTitle} | ${rightTitle}`;
   }
 
   private static renameSplitTab(
@@ -1159,9 +1161,13 @@ export class SplitViewFactory {
           : state.leftParentItemID;
       this.updateContextPane(tabID, win, activeParentItemID);
       this.updateTabDataForSession(tabID);
-      this.trackTimeout(state, () => {
-        this.focusSplitSide(tabID, state.activeSide);
-      }, 0);
+      this.trackTimeout(
+        state,
+        () => {
+          this.focusSplitSide(tabID, state.activeSide);
+        },
+        0,
+      );
     }
 
     Zotero.debug(
