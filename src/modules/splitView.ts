@@ -127,6 +127,78 @@ export class SplitViewFactory {
   }
 
   /**
+   * Prefer the parent item's title for split-view tab labels so they keep
+   * showing the paper title instead of PDF attachment names.
+   */
+  private static getTabTitleBaseItem(item: Zotero.Item): Zotero.Item {
+    if (!item.parentItemID) {
+      return item;
+    }
+    return Zotero.Items.get(item.parentItemID) || item;
+  }
+
+  private static getTabTitleForItem(item: Zotero.Item): string {
+    const baseItem = this.getTabTitleBaseItem(item);
+    const title = String(
+      baseItem.getField("title") ||
+        item.getField("title") ||
+        (item as any).attachmentFilename ||
+        "PDF",
+    ).trim();
+    return title.substring(0, 50);
+  }
+
+  private static getSplitTabTitle(
+    leftItem: Zotero.Item,
+    rightItem: Zotero.Item,
+  ): string {
+    const leftTitle = this.getTabTitleForItem(leftItem);
+    const rightTitle = this.getTabTitleForItem(rightItem);
+    return leftTitle === rightTitle ? leftTitle : `${leftTitle} | ${rightTitle}`;
+  }
+
+  private static renameSplitTab(
+    tabID: string,
+    leftItem: Zotero.Item,
+    rightItem: Zotero.Item,
+  ) {
+    const win = Zotero.getMainWindow();
+    const Zotero_Tabs = (win as any).Zotero_Tabs;
+    Zotero_Tabs.rename(tabID, this.getSplitTabTitle(leftItem, rightItem));
+  }
+
+  /**
+   * Keep the requested side as the active pane and try to move keyboard focus
+   * there as well, so initialization-time focus changes don't flip it back.
+   */
+  private static focusSplitSide(tabID: string, side: "left" | "right") {
+    const state = this.stateMap.get(tabID);
+    if (!state || state.isCleaningUp) return;
+
+    const browser = side === "right" ? state.rightBrowser : state.leftBrowser;
+
+    try {
+      browser.focus();
+    } catch {
+      // Ignore focus errors and continue with other focus targets below.
+    }
+
+    try {
+      browser.contentWindow?.focus?.();
+    } catch {
+      // Ignore focus errors.
+    }
+
+    try {
+      const internalReader = this.getInternalReaderFromBrowser(browser);
+      internalReader?._primaryView?._iframe?.focus?.();
+      internalReader?._primaryView?._iframeWindow?.focus?.();
+    } catch {
+      // Ignore focus errors.
+    }
+  }
+
+  /**
    * Apply an icon to a XUL menuitem element (menuitem-iconic style)
    */
   private static setMenuItemIcon(menuitem: Element, iconURI: string) {
@@ -832,6 +904,12 @@ export class SplitViewFactory {
         Zotero.getMainWindow(),
         targetParentItemID,
       );
+      this.updateTabDataForSession(reader.tabID);
+    }
+
+    const preferredSide = options.activeSide || options.primarySide;
+    if (preferredSide) {
+      this.focusSplitSide(reader.tabID, preferredSide);
     }
   }
 
@@ -1074,6 +1152,16 @@ export class SplitViewFactory {
       if (activeSide === "left" || activeSide === "right") {
         state.activeSide = activeSide;
       }
+
+      const activeParentItemID =
+        state.activeSide === "right"
+          ? state.rightParentItemID
+          : state.leftParentItemID;
+      this.updateContextPane(tabID, win, activeParentItemID);
+      this.updateTabDataForSession(tabID);
+      this.trackTimeout(state, () => {
+        this.focusSplitSide(tabID, state.activeSide);
+      }, 0);
     }
 
     Zotero.debug(
@@ -1148,6 +1236,9 @@ export class SplitViewFactory {
 
     // Update scrollbar colors to reflect new primary side
     this.updateScrollbarColors(tabID);
+
+    // Persist the primary side so session restore keeps the expected controller.
+    this.updateTabDataForSession(tabID);
 
     // Restart sync with new primary
     if (state.syncEnabled) {
@@ -1352,22 +1443,10 @@ export class SplitViewFactory {
       this.updateTabDataForSession(tabID);
 
       // Update tab title
-      const Zotero_Tabs = (win as any).Zotero_Tabs;
       const leftItem = Zotero.Items.get(state.leftItemID);
       const rightItem = Zotero.Items.get(state.rightItemID);
-      const leftTitle = String(leftItem.getField("title") || "PDF").substring(
-        0,
-        50,
-      );
-      const rightTitle = String(rightItem.getField("title") || "PDF").substring(
-        0,
-        50,
-      );
-
-      if (state.isSamePDF) {
-        Zotero_Tabs.rename(tabID, `${leftTitle}`);
-      } else {
-        Zotero_Tabs.rename(tabID, `${leftTitle} | ${rightTitle}`);
+      if (leftItem && rightItem) {
+        this.renameSplitTab(tabID, leftItem, rightItem);
       }
 
       // Restart sync if it was enabled
@@ -1526,18 +1605,7 @@ export class SplitViewFactory {
       // 13. Update tab data and title
       this.updateTabDataForSession(tabID);
 
-      const Zotero_Tabs = (win as any).Zotero_Tabs;
-      const leftTitle = String(
-        newLeftItem.getField("title") || "PDF",
-      ).substring(0, 50);
-      const rightTitle = String(
-        newRightItem.getField("title") || "PDF",
-      ).substring(0, 50);
-      if (state.isSamePDF) {
-        Zotero_Tabs.rename(tabID, `${leftTitle}`);
-      } else {
-        Zotero_Tabs.rename(tabID, `${leftTitle} | ${rightTitle}`);
-      }
+      this.renameSplitTab(tabID, newLeftItem, newRightItem);
 
       // 14. Restart sync if it was enabled
       if (wasSyncEnabled) {
@@ -1677,16 +1745,7 @@ export class SplitViewFactory {
     (newContainer as any).style.height = "100%";
     (newContainer as any).style.overflow = "hidden";
 
-    // 6. Get item info for tab title
-    const leftTitle = String(leftItem.getField("title") || "PDF 1").substring(
-      0,
-      30,
-    );
-    const rightTitle = String(
-      secondaryPDF.getField("title") || "PDF 2",
-    ).substring(0, 30);
-
-    // 7. Build split view layout
+    // 6. Build split view layout
     const mainHbox = win.document.createXULElement("hbox") as XULElement;
     (mainHbox as any).style.display = "flex";
     (mainHbox as any).style.flexDirection = "row";
@@ -1949,9 +2008,10 @@ export class SplitViewFactory {
         isSamePDF: false,
         splitRatio: newState.splitRatio,
         syncEnabled: newState.syncEnabled,
+        primarySide: newState.primarySide,
+        activeSide: newState.activeSide,
       });
-      // Different-PDF split view: show "Name1 | Name2" without extra prefix.
-      Zotero_Tabs.rename(tabID, `${leftTitle} | ${rightTitle}`);
+      this.renameSplitTab(tabID, leftItem, secondaryPDF);
     } catch (e) {
       this.cleanupTab(tabID);
       throw e;
@@ -2301,6 +2361,8 @@ export class SplitViewFactory {
         isSamePDF: true,
         splitRatio: newState.splitRatio,
         syncEnabled: newState.syncEnabled,
+        primarySide: newState.primarySide,
+        activeSide: newState.activeSide,
       });
     } catch (e) {
       this.cleanupTab(tabID);
@@ -4883,6 +4945,7 @@ export class SplitViewFactory {
 
       // Update scrollbar colors to reflect active/primary side
       self.updateScrollbarColors(tabID);
+      self.updateTabDataForSession(tabID);
 
       // Skip context pane update when both sides belong to the same
       // Zotero item (same parentItemID), to avoid redundant updates
