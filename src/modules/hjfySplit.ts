@@ -34,15 +34,35 @@ export class HJFYSplitFactory {
   private static readonly menuID = "zotero-itemmenu-hjfy-split-reader";
 
   static registerItemMenu() {
-    ztoolkit.Menu.register("item", {
-      tag: "menuitem",
-      id: this.menuID,
-      label: getString("hjfy-menu-label"),
-      icon: `chrome://${addon.data.config.addonRef}/content/icons/svreader.svg`,
-      commandListener: () => {
-        void this.handleMenuCommand();
+    const win = Zotero.getMainWindow();
+    const doc = win.document;
+    const itemMenu = doc.getElementById("zotero-itemmenu");
+    if (!itemMenu) return;
+
+    const elem = ztoolkit.UI.appendElement(
+      {
+        tag: "menuitem",
+        id: this.menuID,
+        namespace: "xul",
+        attributes: {
+          label: getString("hjfy-menu-label"),
+          image: `chrome://${addon.data.config.addonRef}/content/icons/svreader.svg`,
+        },
+        classList: ["menuitem-iconic"],
+        listeners: [
+          {
+            type: "command",
+            listener: () => {
+              void this.handleMenuCommand();
+            },
+          },
+        ],
       },
-    });
+      itemMenu,
+    ) as XULElement;
+
+    (elem as any).style.setProperty("-moz-context-properties", "fill");
+    (elem as any).style.setProperty("fill", "currentColor");
   }
 
   private static async handleMenuCommand() {
