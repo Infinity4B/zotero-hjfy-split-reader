@@ -136,6 +136,10 @@ export class UIExampleFactory {
     doc.getElementById("zotero-item-pane-content")?.classList.add("makeItRed");
   }
 
+  // Example functions using the deprecated ztoolkit.Menu API are commented out.
+  // In zotero-plugin-toolkit v5.1+, use ztoolkit.UI.appendElement() or direct DOM
+  // manipulation to register menu items.
+  /*
   @example
   static registerRightClickMenuItem() {
     const menuIcon = `chrome://${addon.data.config.addonRef}/content/icons/favicon@0.5x.png`;
@@ -144,7 +148,7 @@ export class UIExampleFactory {
       tag: "menuitem",
       id: "zotero-itemmenu-addontemplate-test",
       label: getString("menuitem-label"),
-      commandListener: (ev) => addon.hooks.onDialogEvents("dialogExample"),
+      commandListener: (ev: Event) => addon.hooks.onDialogEvents("dialogExample"),
       icon: menuIcon,
     });
   }
@@ -183,6 +187,7 @@ export class UIExampleFactory {
       oncommand: "alert('Hello World! File Menuitem.')",
     });
   }
+  */
 
   @example
   static async registerExtraColumn() {
