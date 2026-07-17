@@ -14,6 +14,9 @@ Fetch HJFY translations for arXiv papers and open the source PDF and translation
 - Adds an item context-menu action: `Fetch HJFY translation and open in split view`
 - Reuses an existing HJFY translation attachment when it already exists under the item
 - Downloads and stores the translated PDF as a child attachment when HJFY already has a translated file
+- Detects the exact arXiv version from the local PDF, attachment metadata, or item metadata so the source and translation versions match
+- Selects the highest detected version when a parent item contains multiple source PDFs
+- Keeps polling while HJFY downloads sources or delays publishing the finished PDF URL
 - Opens the source PDF and translated PDF in a single split-view reader tab
 - Makes the translated pane on the right the default primary pane, so the source pane follows its scrolling
 - Keeps Split-View Reader capabilities such as pane swapping
@@ -36,11 +39,13 @@ The screenshots below show the Chinese Zotero UI, which is the default presentat
 
 ## Current Scope
 
-- Supported well: arXiv-backed papers where Zotero metadata contains an arXiv DOI, URL, or arXiv ID in `Extra`
-- Partially supported: papers whose HJFY translation task already exists but still require polling
+- Supported well: papers whose local PDF contains an arXiv version stamp, or whose attachment/item metadata contains a complete `arXiv ID + vN`
+- Supported: HJFY source downloads, queued translation tasks, and delayed PDF URL availability
 - Not yet automated: HJFY local-document upload flow, because `hjfy.top` currently requires login for uploads and task creation
 
 If HJFY requires login to create a translation task, the plugin opens the corresponding HJFY page so you can continue there.
+
+To avoid silently downloading an older translation, the action stops when only a base arXiv ID is available and the local PDF version cannot be determined. Select the specific PDF attachment or add a complete versioned ID to the attachment name/URL or the parent item's DOI, URL, or `Extra` field.
 
 ## Install
 
@@ -55,7 +60,8 @@ If HJFY requires login to create a translation task, the plugin opens the corres
 1. In Zotero, select one paper item or one PDF attachment under that paper
 2. Right-click and choose `Fetch HJFY translation and open in split view`
 3. The plugin will:
-   - find an existing translation attachment if present
+   - determine the exact arXiv version of the local PDF
+   - find an existing translation attachment for that exact version
    - otherwise query `hjfy.top`
    - save the translated PDF under the same Zotero item if available
    - open the source PDF and translation in split view
