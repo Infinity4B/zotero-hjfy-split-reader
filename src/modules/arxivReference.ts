@@ -12,7 +12,8 @@ export type ArxivResolutionErrorCode =
   | "not-found"
   | "version-missing"
   | "base-conflict"
-  | "ambiguous";
+  | "ambiguous"
+  | "version-conflict";
 
 export class ArxivResolutionError extends Error {
   public readonly code: ArxivResolutionErrorCode;
@@ -33,12 +34,13 @@ interface ArxivEvidence {
   pdfText?: string;
   attachmentTexts?: string[];
   parentTexts?: string[];
+  allowParentVersionFallback?: boolean;
 }
 
 const arxivPatterns = [
   /10\.48550\/arxiv\.([0-9]{4}\.[0-9]{4,5})(?:v([0-9]+))?/gi,
   /arxiv\.org\/(?:abs|pdf)\/([0-9]{4}\.[0-9]{4,5})(?:v([0-9]+))?(?:\.pdf)?/gi,
-  /\barxiv\s*(?:id\s*)?[:._-]?\s*([0-9]{4}\.[0-9]{4,5})(?:v([0-9]+))?\b/gi,
+  /(?:^|[^a-z0-9])arxiv\s*(?:id\s*)?[:._-]?\s*([0-9]{4}\.[0-9]{4,5})(?:v([0-9]+))?\b/gi,
   /(?:^|[^0-9])([0-9]{4}\.[0-9]{4,5})v([0-9]+)(?=$|[^0-9])/gi,
 ];
 
@@ -88,10 +90,15 @@ function collectReferences(texts: string[] = []) {
   return texts.flatMap((text) => extractArxivReferences(text));
 }
 
-function uniqueBaseId(
+interface ArxivEvidenceSummary {
+  baseId: string | null;
+  versionedReference: VersionedArxivReference | null;
+}
+
+function summarizeEvidence(
   references: ArxivReference[],
   sourceName: string,
-): string | null {
+): ArxivEvidenceSummary {
   const baseIds = [...new Set(references.map((reference) => reference.baseId))];
   if (baseIds.length > 1) {
     throw new ArxivResolutionError(
@@ -99,18 +106,62 @@ function uniqueBaseId(
       `${sourceName}中检测到多个不同的 arXiv 编号: ${baseIds.join(", ")}`,
     );
   }
-  return baseIds[0] || null;
+
+  const versionedReferences = references.filter(
+    (reference): reference is VersionedArxivReference =>
+      reference.version !== null,
+  );
+  const versionedIds = [
+    ...new Set(versionedReferences.map((reference) => reference.id)),
+  ];
+  if (versionedIds.length > 1) {
+    throw new ArxivResolutionError(
+      "version-conflict",
+      `${sourceName}中检测到多个不同的 arXiv 版本: ${versionedIds.join(", ")}`,
+    );
+  }
+
+  return {
+    baseId: baseIds[0] || null,
+    versionedReference: versionedReferences[0] || null,
+  };
 }
 
-function firstVersioned(
+function summarizePdfEvidence(
   references: ArxivReference[],
-  baseId?: string | null,
-): VersionedArxivReference | null {
-  const reference = references.find(
-    (candidate) =>
-      candidate.version !== null && (!baseId || candidate.baseId === baseId),
+  expectedBaseId: string | null,
+): ArxivEvidenceSummary {
+  if (!references.length) {
+    return { baseId: null, versionedReference: null };
+  }
+
+  if (!expectedBaseId) {
+    // The arXiv version stamp is normally the first reference on page one.
+    // Later IDs are commonly citations and should not make an otherwise
+    // self-identifying PDF ambiguous.
+    const firstBaseId = references[0].baseId;
+    return summarizeEvidence(
+      references.filter((reference) => reference.baseId === firstBaseId),
+      "本地 PDF 首页",
+    );
+  }
+
+  const matchingReferences = references.filter(
+    (reference) => reference.baseId === expectedBaseId,
   );
-  return reference ? (reference as VersionedArxivReference) : null;
+  if (matchingReferences.length) {
+    // Other arXiv IDs on the first page can be citations. Once the expected
+    // paper ID is present, only use matching references as version evidence.
+    return summarizeEvidence(matchingReferences, "本地 PDF 首页");
+  }
+
+  const detectedBaseIds = [
+    ...new Set(references.map((reference) => reference.baseId)),
+  ];
+  throw new ArxivResolutionError(
+    "base-conflict",
+    `本地 PDF 中的 arXiv 编号 ${detectedBaseIds.join(", ")} 与条目 ${expectedBaseId} 不一致`,
+  );
 }
 
 /**
@@ -124,58 +175,52 @@ export function resolveArxivReference(
   const attachmentReferences = collectReferences(evidence.attachmentTexts);
   const pdfReferences = extractArxivReferences(evidence.pdfText || "");
 
-  const parentBaseId = uniqueBaseId(parentReferences, "父条目元数据");
-  const attachmentBaseId = uniqueBaseId(attachmentReferences, "PDF 附件元数据");
+  const parentSummary = summarizeEvidence(parentReferences, "父条目元数据");
+  const attachmentSummary = summarizeEvidence(
+    attachmentReferences,
+    "PDF 附件元数据",
+  );
 
-  if (pdfReferences.length) {
-    if (parentBaseId) {
-      const matchingPDF = firstVersioned(pdfReferences, parentBaseId);
-      if (matchingPDF) return matchingPDF;
-
-      const pdfBaseIds = [
-        ...new Set(
-          pdfReferences
-            .filter((reference) => reference.version !== null)
-            .map((reference) => reference.baseId),
-        ),
-      ];
-      if (pdfBaseIds.length) {
-        throw new ArxivResolutionError(
-          "base-conflict",
-          `本地 PDF 中的 arXiv 编号 ${pdfBaseIds.join(", ")} 与父条目 ${parentBaseId} 不一致`,
-        );
-      }
-    } else if (attachmentBaseId) {
-      const matchingPDF = firstVersioned(pdfReferences, attachmentBaseId);
-      if (matchingPDF) return matchingPDF;
-
-      const uniquePDFBaseId = uniqueBaseId(pdfReferences, "本地 PDF 首页");
-      const pdfReference = firstVersioned(pdfReferences, uniquePDFBaseId);
-      if (pdfReference) return pdfReference;
-    } else {
-      const uniquePDFBaseId = uniqueBaseId(pdfReferences, "本地 PDF 首页");
-      const pdfReference = firstVersioned(pdfReferences, uniquePDFBaseId);
-      if (pdfReference) return pdfReference;
-    }
-  }
-
-  if (attachmentBaseId && parentBaseId && attachmentBaseId !== parentBaseId) {
+  if (
+    attachmentSummary.baseId &&
+    parentSummary.baseId &&
+    attachmentSummary.baseId !== parentSummary.baseId
+  ) {
     throw new ArxivResolutionError(
       "base-conflict",
-      `PDF 附件的 arXiv 编号 ${attachmentBaseId} 与父条目 ${parentBaseId} 不一致`,
+      `PDF 附件的 arXiv 编号 ${attachmentSummary.baseId} 与父条目 ${parentSummary.baseId} 不一致`,
     );
   }
 
-  const attachmentReference = firstVersioned(
-    attachmentReferences,
-    parentBaseId || attachmentBaseId,
-  );
-  if (attachmentReference) return attachmentReference;
+  const expectedBaseId = parentSummary.baseId || attachmentSummary.baseId;
+  const pdfSummary = summarizePdfEvidence(pdfReferences, expectedBaseId);
 
-  const parentReference = firstVersioned(parentReferences, parentBaseId);
-  if (parentReference) return parentReference;
+  if (
+    pdfSummary.baseId &&
+    attachmentSummary.baseId &&
+    pdfSummary.baseId !== attachmentSummary.baseId
+  ) {
+    throw new ArxivResolutionError(
+      "base-conflict",
+      `本地 PDF 中的 arXiv 编号 ${pdfSummary.baseId} 与附件元数据 ${attachmentSummary.baseId} 不一致`,
+    );
+  }
 
-  const unresolvedBaseId = attachmentBaseId || parentBaseId;
+  if (pdfSummary.versionedReference) {
+    return pdfSummary.versionedReference;
+  }
+  if (attachmentSummary.versionedReference) {
+    return attachmentSummary.versionedReference;
+  }
+  if (
+    evidence.allowParentVersionFallback !== false &&
+    parentSummary.versionedReference
+  ) {
+    return parentSummary.versionedReference;
+  }
+
+  const unresolvedBaseId =
+    pdfSummary.baseId || attachmentSummary.baseId || parentSummary.baseId;
   if (unresolvedBaseId) {
     throw new ArxivResolutionError(
       "version-missing",
@@ -210,22 +255,41 @@ export function hasExactArxivReference(
   texts: string[],
   expected: VersionedArxivReference,
 ) {
-  return collectReferences(texts).some(
-    (reference) =>
-      reference.version === expected.version && reference.id === expected.id,
+  try {
+    const summary = summarizeEvidence(
+      collectReferences(texts),
+      "译文附件元数据",
+    );
+    return summary.versionedReference?.id === expected.id;
+  } catch {
+    return false;
+  }
+}
+
+export function hasUnversionedArxivReference(
+  texts: string[],
+  expectedBaseId: string,
+) {
+  const matchingReferences = collectReferences(texts).filter(
+    (reference) => reference.baseId === expectedBaseId,
+  );
+  return (
+    matchingReferences.length > 0 &&
+    matchingReferences.every((reference) => reference.version === null)
   );
 }
 
-export type HJFYRoute = "arxivInfo" | "arxivStatus" | "arxivFiles" | "arxiv";
-
-export function buildHjfyURL(
-  route: HJFYRoute,
-  reference: VersionedArxivReference,
+export function getUnambiguousVersionedArxivReference(
+  texts: string[],
+  sourceName: string,
 ) {
-  const prefix = route === "arxiv" ? "" : "api/";
-  // HJFY's arxivInfo endpoint forwards the identifier to the arXiv Atom API,
-  // which rejects version suffixes. Task-specific routes do support versions
-  // and must keep them to avoid mixing translations from different revisions.
-  const id = route === "arxivInfo" ? reference.baseId : reference.id;
-  return `https://hjfy.top/${prefix}${route}/${encodeURIComponent(id)}`;
+  return summarizeEvidence(collectReferences(texts), sourceName)
+    .versionedReference;
+}
+
+export function isSupplementaryAttachmentMetadata(texts: string[]) {
+  const normalized = texts.join(" ").toLowerCase();
+  return /\b(?:supplement|supplementary|appendix|slides?)\b|补充材料|附录|幻灯/.test(
+    normalized,
+  );
 }

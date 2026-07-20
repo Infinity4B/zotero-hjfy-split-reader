@@ -1,19 +1,16 @@
 import { getString } from "../utils/locale";
 import {
   ArxivResolutionError,
-  buildHjfyURL,
-  extractArxivReferences,
+  getUnambiguousVersionedArxivReference,
   hasExactArxivReference,
+  hasUnversionedArxivReference,
+  isSupplementaryAttachmentMetadata,
   resolveArxivReference,
   selectHighestArxivVersion,
 } from "./arxivReference";
 import type { VersionedArxivReference } from "./arxivReference";
-import {
-  classifyHjfyTaskState,
-  hasHjfyChinesePdf,
-  isHjfyPendingMessage,
-} from "./hjfyState";
-import type { HJFYTaskStatus } from "./hjfyState";
+import { buildHjfyURL, HJFYClient, HJFYClientError } from "./hjfyClient";
+import { hasHjfyChinesePdf } from "./hjfyState";
 import { SplitViewFactory } from "./splitView";
 
 interface ResolvedSelection {
@@ -27,32 +24,11 @@ interface ResolvedSourcePDF {
   reference: VersionedArxivReference;
 }
 
-interface HJFYArxivInfo {
-  hasSrc: boolean;
-}
-
-interface HJFYArxivStatus {
-  status: HJFYTaskStatus;
-  info?: string;
-}
-
-interface HJFYFileInfo {
-  id: string;
-  title: string;
-  origin: string;
-  zhCN?: string;
-  zhCNTar?: string;
-  isDeepSeek: boolean;
-}
-
-class HJFYLoginRequiredError extends Error {
-  constructor(public readonly reference: VersionedArxivReference) {
-    super("幻觉翻译要求登录后才能为这篇论文创建翻译任务");
-  }
-}
-
 export class HJFYSplitFactory {
   private static readonly menuID = "zotero-itemmenu-hjfy-split-reader";
+  private static readonly hjfyClient = new HJFYClient({
+    delayImplementation: (milliseconds) => Zotero.Promise.delay(milliseconds),
+  });
 
   static registerItemMenu() {
     const win = Zotero.getMainWindow();
@@ -104,10 +80,12 @@ export class HJFYSplitFactory {
     });
     popup.show();
 
+    let activeReference: VersionedArxivReference | null = null;
     try {
       const { parentItem, sourcePDF, reference } = await this.resolveSelection(
         items[0],
       );
+      activeReference = reference;
       popup.createLine({
         text: `已确认本地论文版本: arXiv ${reference.id}`,
         type: "success",
@@ -122,6 +100,13 @@ export class HJFYSplitFactory {
           progress: 40,
         });
       } else {
+        if (this.findUnversionedTranslation(parentItem, reference)) {
+          popup.createLine({
+            text: `检测到旧版无版本译文，但无法确认是否对应 ${reference.id}，将获取准确版本`,
+            type: "warning",
+            progress: 30,
+          });
+        }
         popup.createLine({
           text: "未找到现成翻译，正在向 hjfy.top 查询",
           type: "default",
@@ -154,8 +139,10 @@ export class HJFYSplitFactory {
       });
       popup.startCloseTimer(4000);
     } catch (error) {
-      if (error instanceof HJFYLoginRequiredError) {
-        Zotero.launchURL(buildHjfyURL("arxiv", error.reference));
+      if (error instanceof HJFYClientError && error.code === "login-required") {
+        if (activeReference) {
+          Zotero.launchURL(buildHjfyURL("arxiv", activeReference));
+        }
       }
       const message =
         error instanceof Error ? error.message : "未知错误，未能获取幻觉翻译";
@@ -212,7 +199,9 @@ export class HJFYSplitFactory {
     preferredReference?: VersionedArxivReference | null,
   ): Promise<ResolvedSourcePDF> {
     const sourcePDFs = this.getPDFAttachments(parentItem).filter(
-      (attachment) => !this.isTranslationAttachment(attachment),
+      (attachment) =>
+        !this.isTranslationAttachment(attachment) &&
+        !this.isSupplementaryAttachment(attachment),
     );
     if (!sourcePDFs.length) {
       throw new Error("该条目下没有可用于分屏的原始 PDF 附件");
@@ -237,7 +226,11 @@ export class HJFYSplitFactory {
         try {
           return {
             sourcePDF,
-            reference: await this.resolveSourceReference(parentItem, sourcePDF),
+            reference: await this.resolveSourceReference(
+              parentItem,
+              sourcePDF,
+              false,
+            ),
           };
         } catch (error) {
           return { sourcePDF, error };
@@ -248,6 +241,7 @@ export class HJFYSplitFactory {
       (result): result is { sourcePDF: Zotero.Item; error: unknown } =>
         "error" in result,
     );
+    const blockingFailures = failed;
     const resolved = settled.filter(
       (result): result is ResolvedSourcePDF => "reference" in result,
     );
@@ -256,20 +250,24 @@ export class HJFYSplitFactory {
         (candidate) => candidate.reference.id === preferredReference.id,
       );
       if (exact) return exact;
-      if (!failed.length) {
+      if (!blockingFailures.length) {
         throw new Error(
           `没有找到与译文 ${preferredReference.id} 对应的本地原文 PDF`,
         );
       }
     }
 
-    if (failed.length) {
-      const titles = failed
+    if (blockingFailures.length) {
+      const titles = blockingFailures
         .map((result) => result.sourcePDF.getDisplayTitle())
         .join("、");
       throw new Error(
         `多个原文 PDF 中有附件无法确认版本（${titles}），请直接选中要翻译的 PDF 附件`,
       );
+    }
+
+    if (!resolved.length) {
+      throw new Error("该条目下没有可确认 arXiv 版本的原始 PDF 附件");
     }
 
     const baseIds = [
@@ -326,20 +324,10 @@ export class HJFYSplitFactory {
   }
 
   private static getAttachmentVersion(attachment: Zotero.Item) {
-    const references = this.getAttachmentMetadataTexts(attachment).flatMap(
-      (text) => extractArxivReferences(text),
+    return getUnambiguousVersionedArxivReference(
+      this.getAttachmentMetadataTexts(attachment),
+      "译文附件元数据",
     );
-    const versioned = references.filter(
-      (reference): reference is VersionedArxivReference =>
-        reference.version !== null,
-    );
-    const ids = [...new Set(versioned.map((reference) => reference.id))];
-    if (ids.length > 1) {
-      throw new Error(
-        `译文附件中检测到多个 arXiv 版本（${ids.join(", ")}），无法确定对应原文`,
-      );
-    }
-    return versioned[0] || null;
   }
 
   private static async extractFirstPageText(sourcePDF: Zotero.Item) {
@@ -364,12 +352,14 @@ export class HJFYSplitFactory {
   private static async resolveSourceReference(
     parentItem: Zotero.Item,
     sourcePDF: Zotero.Item,
+    allowParentVersionFallback = true,
   ) {
     try {
       return resolveArxivReference({
         pdfText: await this.extractFirstPageText(sourcePDF),
         attachmentTexts: this.getAttachmentMetadataTexts(sourcePDF),
         parentTexts: this.getParentMetadataTexts(parentItem),
+        allowParentVersionFallback,
       });
     } catch (error) {
       if (
@@ -397,6 +387,12 @@ export class HJFYSplitFactory {
     );
   }
 
+  private static isSupplementaryAttachment(attachment: Zotero.Item) {
+    return isSupplementaryAttachmentMetadata(
+      this.getAttachmentMetadataTexts(attachment),
+    );
+  }
+
   private static findExistingTranslation(
     parentItem: Zotero.Item,
     reference: VersionedArxivReference,
@@ -410,6 +406,19 @@ export class HJFYSplitFactory {
     });
   }
 
+  private static findUnversionedTranslation(
+    parentItem: Zotero.Item,
+    reference: VersionedArxivReference,
+  ) {
+    return this.getPDFAttachments(parentItem).find((attachment) => {
+      if (!this.isTranslationAttachment(attachment)) return false;
+      return hasUnversionedArxivReference(
+        this.getAttachmentMetadataTexts(attachment),
+        reference.baseId,
+      );
+    });
+  }
+
   private static async fetchAndAttachTranslation(
     parentItem: Zotero.Item,
     reference: VersionedArxivReference,
@@ -417,199 +426,32 @@ export class HJFYSplitFactory {
     // HJFY's versioned file endpoint can already contain a completed
     // translation even when its arxivInfo endpoint rejects versioned IDs.
     // Check the exact requested version before doing the metadata/source gate.
-    const existing = await this.tryFetchArxivFileInfo(reference);
+    const existing = await this.hjfyClient.fetchArxivFileInfo(reference);
     if (hasHjfyChinesePdf(existing)) {
       return this.savePdfAsAttachment(
         parentItem,
-        await this.downloadBinary(existing.zhCN),
+        await this.hjfyClient.downloadPdf(existing.zhCN),
         reference,
       );
     }
 
-    const arxivInfo = await this.waitForArxivInfo(reference);
-    if (!arxivInfo.hasSrc) {
+    const arxivInfo = await this.hjfyClient.waitForArxivInfo(reference);
+    if (arxivInfo.exactVersion && !arxivInfo.hasSrc) {
       throw new Error(
         `arXiv ${reference.id} 没有可用的 LaTeX 源码，hjfy.top 不能直接生成翻译 PDF`,
       );
     }
-
-    await this.primeArxivTask(reference);
-    const fileInfo = await this.waitForTranslation(reference);
-    const pdfBuffer = await this.downloadBinary(fileInfo.zhCN);
-    return this.savePdfAsAttachment(parentItem, pdfBuffer, reference);
-  }
-
-  private static getRequestHeaders(): HeadersInit {
-    return {
-      "User-Agent":
-        "zotero-hjfy-split-reader (Zotero Plugin; +https://github.com/Infinity4B/zotero-hjfy-split-reader)",
-    };
-  }
-
-  private static async fetchArxivInfo(
-    reference: VersionedArxivReference,
-  ): Promise<HJFYArxivInfo | "pending"> {
-    const response = await fetch(buildHjfyURL("arxivInfo", reference), {
-      headers: this.getRequestHeaders(),
-    });
-    if (!response.ok) {
-      throw new Error(
-        `无法读取 hjfy.top 的 arXiv 信息: HTTP ${response.status}`,
+    if (!arxivInfo.exactVersion && !arxivInfo.hasSrc) {
+      ztoolkit.log(
+        `HJFY only returned base metadata for ${reference.id}; continuing with the exact version task`,
+        arxivInfo.returnedId,
       );
     }
 
-    const payload = (await response.json()) as unknown as {
-      status: number;
-      data?: HJFYArxivInfo;
-      msg?: string;
-    };
-    if (payload.status !== 0 || !payload.data) {
-      if (isHjfyPendingMessage(payload.msg)) {
-        return "pending";
-      }
-      throw new Error(payload.msg || "hjfy.top 返回了无效的 arXiv 信息");
-    }
-
-    return payload.data;
-  }
-
-  private static async fetchArxivStatus(
-    reference: VersionedArxivReference,
-  ): Promise<HJFYArxivStatus | "login-required" | "pending"> {
-    const response = await fetch(buildHjfyURL("arxivStatus", reference), {
-      headers: this.getRequestHeaders(),
-    });
-    if (!response.ok) {
-      throw new Error(`无法查询翻译状态: HTTP ${response.status}`);
-    }
-
-    const payload = (await response.json()) as unknown as {
-      status: number;
-      data?: HJFYArxivStatus;
-      msg?: string;
-    };
-    if (payload.status === 101) {
-      return "login-required";
-    }
-    if (payload.status !== 0 || !payload.data) {
-      if (isHjfyPendingMessage(payload.msg)) {
-        return "pending";
-      }
-      throw new Error(payload.msg || "hjfy.top 返回了无效的状态数据");
-    }
-
-    return payload.data;
-  }
-
-  private static async fetchArxivFileInfo(
-    reference: VersionedArxivReference,
-  ): Promise<HJFYFileInfo> {
-    const response = await fetch(buildHjfyURL("arxivFiles", reference), {
-      headers: this.getRequestHeaders(),
-    });
-    if (!response.ok) {
-      throw new Error(`无法读取翻译文件信息: HTTP ${response.status}`);
-    }
-
-    const payload = (await response.json()) as unknown as {
-      status: number;
-      data?: HJFYFileInfo;
-      msg?: string;
-    };
-    if (payload.status !== 0 || !payload.data) {
-      throw new Error(payload.msg || "hjfy.top 返回了无效的文件信息");
-    }
-
-    return payload.data;
-  }
-
-  private static async tryFetchArxivFileInfo(
-    reference: VersionedArxivReference,
-  ) {
-    try {
-      return await this.fetchArxivFileInfo(reference);
-    } catch {
-      return null;
-    }
-  }
-
-  private static async waitForArxivInfo(reference: VersionedArxivReference) {
-    for (let attempt = 0; attempt < 36; attempt++) {
-      const arxivInfo = await this.fetchArxivInfo(reference);
-      if (arxivInfo !== "pending") {
-        return arxivInfo;
-      }
-      await Zotero.Promise.delay(10000);
-    }
-
-    throw new Error(
-      `等待 hjfy.top 下载 arXiv ${reference.id} 的论文源码超时，请稍后重试`,
-    );
-  }
-
-  private static async primeArxivTask(reference: VersionedArxivReference) {
-    try {
-      const response = await fetch(buildHjfyURL("arxiv", reference), {
-        headers: this.getRequestHeaders(),
-      });
-      const text = await response.text();
-      if (text.includes("需要先登录")) {
-        throw new HJFYLoginRequiredError(reference);
-      }
-    } catch (error) {
-      if (error instanceof HJFYLoginRequiredError) {
-        throw error;
-      }
-      ztoolkit.log("primeArxivTask failed", error);
-    }
-  }
-
-  private static async waitForTranslation(reference: VersionedArxivReference) {
-    let retriggeredAfterFinished = false;
-    for (let attempt = 0; attempt < 36; attempt++) {
-      const fileInfo = await this.tryFetchArxivFileInfo(reference);
-      if (hasHjfyChinesePdf(fileInfo)) {
-        return fileInfo;
-      }
-
-      const status = await this.fetchArxivStatus(reference);
-      if (status === "login-required") {
-        throw new HJFYLoginRequiredError(reference);
-      }
-      if (status === "pending") {
-        await Zotero.Promise.delay(10000);
-        continue;
-      }
-
-      if (classifyHjfyTaskState(status.status, fileInfo) === "failed") {
-        throw new Error(
-          status.info ||
-            (status.status === "fault"
-              ? "hjfy.top 返回了故障状态"
-              : "幻觉翻译任务失败"),
-        );
-      }
-
-      if (status.status === "finished" && !retriggeredAfterFinished) {
-        retriggeredAfterFinished = true;
-        await this.primeArxivTask(reference);
-      }
-
-      await Zotero.Promise.delay(10000);
-    }
-
-    throw new Error("等待幻觉翻译生成中文 PDF 超时，请稍后重试");
-  }
-
-  private static async downloadBinary(url: string) {
-    const response = await fetch(url, {
-      headers: this.getRequestHeaders(),
-    });
-    if (!response.ok) {
-      throw new Error(`下载翻译 PDF 失败: HTTP ${response.status}`);
-    }
-
-    return response.arrayBuffer();
+    await this.hjfyClient.primeArxivTask(reference);
+    const fileInfo = await this.hjfyClient.waitForTranslation(reference);
+    const pdfBuffer = await this.hjfyClient.downloadPdf(fileInfo.zhCN);
+    return this.savePdfAsAttachment(parentItem, pdfBuffer, reference);
   }
 
   private static async savePdfAsAttachment(
