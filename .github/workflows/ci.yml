@@ -41,4 +41,7 @@ jobs:
     steps:
       - name: Setup JS
         uses: zotero-plugin-dev/workflows/setup-js@main
-      - run: npm run test
+      - name: Run Node unit tests
+        run: npm test
+      - name: Run Zotero integration tests
+        run: npm run test:zotero
