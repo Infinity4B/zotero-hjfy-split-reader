@@ -27,7 +27,7 @@ export function isHjfyNotReadyMessage(message?: string) {
   if (!message) return false;
 
   const normalized = message.trim();
-  return /未找到|不存在|尚未生成|暂无|还没有|not found|not ready/i.test(
+  return /未找到|不存在|尚未生成|尚未创建|暂无|还没有|not found|not ready/i.test(
     normalized,
   );
 }

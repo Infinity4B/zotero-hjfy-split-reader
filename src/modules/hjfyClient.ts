@@ -6,12 +6,6 @@ import {
   isHjfyPendingMessage,
 } from "./hjfyState";
 
-export interface HJFYArxivInfo {
-  hasSrc: boolean;
-  exactVersion: boolean;
-  returnedId: string | null;
-}
-
 export interface HJFYArxivStatus {
   status: string;
   info?: string;
@@ -49,17 +43,12 @@ export class HJFYClientError extends Error {
   }
 }
 
-export type HJFYRoute = "arxivInfo" | "arxivStatus" | "arxivFiles" | "arxiv";
+export type HJFYRoute = "arxivStatus" | "arxivFiles" | "arxiv";
 
 interface HJFYApiPayload<T> {
   status: number;
   data?: T;
   msg?: string;
-}
-
-interface HJFYRawArxivInfo {
-  hasSrc: boolean;
-  meta?: string;
 }
 
 export interface HJFYClientOptions {
@@ -72,7 +61,6 @@ export interface HJFYClientOptions {
 
 interface RequestOptions {
   notFoundIsNotReady?: boolean;
-  acceptedErrorStatuses?: number[];
 }
 
 const defaultRetryDelaysMs = [500, 1500];
@@ -80,32 +68,13 @@ const defaultRetryDelaysMs = [500, 1500];
 export function buildHjfyURL(
   route: HJFYRoute,
   reference: VersionedArxivReference,
-  identifier = reference.id,
 ) {
   const prefix = route === "arxiv" ? "" : "api/";
-  return `https://hjfy.top/${prefix}${route}/${encodeURIComponent(identifier)}`;
+  return `https://hjfy.top/${prefix}${route}/${encodeURIComponent(reference.id)}`;
 }
 
 function normalizeArxivId(identifier: string) {
   return identifier.trim().toLowerCase();
-}
-
-function extractAtomEntryId(metadata?: string) {
-  if (!metadata) return null;
-
-  const match = metadata.match(
-    /<entry>[\s\S]*?<id>https?:\/\/arxiv\.org\/abs\/([^<]+)<\/id>/i,
-  );
-  return match?.[1]?.trim() || null;
-}
-
-function isVersionedInfoCompatibilityError(payload: HJFYApiPayload<unknown>) {
-  return (
-    payload.status === 400 &&
-    /^(?:arxivInfo error:\s*status not 200|versioned arxiv id (?:is )?not supported)$/i.test(
-      payload.msg?.trim() || "",
-    )
-  );
 }
 
 function isLoginRequiredPayload(payload: HJFYApiPayload<unknown>) {
@@ -133,16 +102,6 @@ function isValidFileInfo(value: unknown): value is HJFYFileInfo {
     (candidate.zhCN === undefined ||
       candidate.zhCN === null ||
       typeof candidate.zhCN === "string")
-  );
-}
-
-function isValidArxivInfo(value: unknown): value is HJFYRawArxivInfo {
-  if (!value || typeof value !== "object") return false;
-
-  const candidate = value as Partial<HJFYRawArxivInfo>;
-  return (
-    typeof candidate.hasSrc === "boolean" &&
-    (candidate.meta === undefined || typeof candidate.meta === "string")
   );
 }
 
@@ -174,7 +133,7 @@ export class HJFYClient {
     this.delayImplementation = options.delayImplementation || defaultDelay;
     this.retryDelaysMs = options.retryDelaysMs || defaultRetryDelaysMs;
     this.pollDelayMs = options.pollDelayMs ?? 10000;
-    this.maxPollAttempts = options.maxPollAttempts ?? 36;
+    this.maxPollAttempts = options.maxPollAttempts ?? 72;
   }
 
   async fetchArxivFileInfo(
@@ -222,21 +181,6 @@ export class HJFYClient {
 
     this.assertExactReference(payload.data.id, reference, "翻译文件");
     return payload.data;
-  }
-
-  async waitForArxivInfo(
-    reference: VersionedArxivReference,
-  ): Promise<HJFYArxivInfo> {
-    for (let attempt = 0; attempt < this.maxPollAttempts; attempt++) {
-      const arxivInfo = await this.fetchArxivInfoOnce(reference);
-      if (arxivInfo) return arxivInfo;
-      await this.delayBeforeNextPoll(attempt);
-    }
-
-    throw new HJFYClientError(
-      "retryable-error",
-      `等待 hjfy.top 下载 arXiv ${reference.id} 的论文源码超时，请稍后重试`,
-    );
   }
 
   async primeArxivTask(reference: VersionedArxivReference) {
@@ -335,106 +279,6 @@ export class HJFYClient {
     return pdfBuffer;
   }
 
-  private async fetchArxivInfoOnce(
-    reference: VersionedArxivReference,
-  ): Promise<HJFYArxivInfo | null> {
-    const exactPayload = await this.requestJsonPayload<HJFYRawArxivInfo>(
-      buildHjfyURL("arxivInfo", reference),
-      "读取精确版本的 arXiv 信息",
-      "精确版本的 arXiv 信息",
-      { acceptedErrorStatuses: [400] },
-    );
-
-    if (isLoginRequiredPayload(exactPayload)) {
-      throw new HJFYClientError(
-        "login-required",
-        "幻觉翻译要求登录后才能读取精确版本的 arXiv 信息",
-      );
-    }
-    if (exactPayload.status === 0 && exactPayload.data) {
-      if (!isValidArxivInfo(exactPayload.data)) {
-        throw new HJFYClientError(
-          "permanent-error",
-          "hjfy.top 返回的精确版本 arXiv 信息字段无效",
-        );
-      }
-      return this.normalizeArxivInfo(exactPayload.data, reference, true);
-    }
-    if (isHjfyPendingMessage(exactPayload.msg)) return null;
-    if (!isVersionedInfoCompatibilityError(exactPayload)) {
-      throw new HJFYClientError(
-        "permanent-error",
-        exactPayload.msg || "hjfy.top 返回了无效的精确版本 arXiv 信息",
-      );
-    }
-
-    const fallbackPayload = await this.requestJsonPayload<HJFYRawArxivInfo>(
-      buildHjfyURL("arxivInfo", reference, reference.baseId),
-      "读取基础 arXiv 信息",
-      "基础 arXiv 信息",
-    );
-    if (isLoginRequiredPayload(fallbackPayload)) {
-      throw new HJFYClientError(
-        "login-required",
-        "幻觉翻译要求登录后才能读取基础 arXiv 信息",
-      );
-    }
-    if (fallbackPayload.status !== 0 || !fallbackPayload.data) {
-      if (isHjfyPendingMessage(fallbackPayload.msg)) return null;
-      throw new HJFYClientError(
-        "permanent-error",
-        fallbackPayload.msg || "hjfy.top 返回了无效的基础 arXiv 信息",
-      );
-    }
-    if (!isValidArxivInfo(fallbackPayload.data)) {
-      throw new HJFYClientError(
-        "permanent-error",
-        "hjfy.top 返回的基础 arXiv 信息字段无效",
-      );
-    }
-
-    return this.normalizeArxivInfo(fallbackPayload.data, reference, false);
-  }
-
-  private normalizeArxivInfo(
-    rawInfo: HJFYRawArxivInfo,
-    reference: VersionedArxivReference,
-    exactRequest: boolean,
-  ): HJFYArxivInfo {
-    const returnedId = extractAtomEntryId(rawInfo.meta);
-    if (exactRequest && !returnedId) {
-      throw new HJFYClientError(
-        "permanent-error",
-        `hjfy.top 没有返回可验证的 arXiv ${reference.id} 版本信息`,
-      );
-    }
-    if (returnedId) {
-      const normalizedReturnedId = normalizeArxivId(returnedId);
-      if (exactRequest) {
-        this.assertExactReference(returnedId, reference, "arXiv 信息");
-      } else if (
-        normalizedReturnedId !== normalizeArxivId(reference.baseId) &&
-        !normalizedReturnedId.startsWith(
-          `${normalizeArxivId(reference.baseId)}v`,
-        )
-      ) {
-        throw new HJFYClientError(
-          "version-mismatch",
-          `hjfy.top 返回的 arXiv 信息 ${returnedId} 与目标论文 ${reference.id} 不一致`,
-        );
-      }
-    }
-
-    return {
-      hasSrc: rawInfo.hasSrc,
-      exactVersion:
-        exactRequest &&
-        returnedId !== null &&
-        normalizeArxivId(returnedId) === normalizeArxivId(reference.id),
-      returnedId,
-    };
-  }
-
   private async fetchArxivStatus(
     reference: VersionedArxivReference,
   ): Promise<HJFYArxivStatus | null> {
@@ -450,7 +294,12 @@ export class HJFYClient {
       );
     }
     if (payload.status !== 0 || !payload.data) {
-      if (isHjfyPendingMessage(payload.msg)) return null;
+      if (
+        isHjfyNotReadyMessage(payload.msg) ||
+        isHjfyPendingMessage(payload.msg)
+      ) {
+        return null;
+      }
       throw new HJFYClientError(
         "permanent-error",
         payload.msg || "hjfy.top 返回了无效的状态数据",
@@ -599,9 +448,6 @@ export class HJFYClient {
         );
       }
       if (!response.ok) {
-        if (options.acceptedErrorStatuses?.includes(response.status)) {
-          return response;
-        }
         throw new HJFYClientError(
           "permanent-error",
           `${actionName}失败：HTTP ${response.status}`,

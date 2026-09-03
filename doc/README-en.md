@@ -17,7 +17,7 @@ Fetch HJFY translations for arXiv papers and open the source PDF and translation
 - Detects the exact arXiv version from the local PDF, attachment metadata, or item metadata so the source and translation versions match
 - Selects the highest detected version when a parent item contains multiple source PDFs
 - Keeps the confirmed local PDF version as the immutable target and stops if HJFY returns another version
-- Keeps polling while HJFY downloads sources or delays publishing the finished PDF URL
+- Keeps polling while HJFY prepares sources, queues translation tasks, or delays publishing the finished PDF URL
 - Opens the source PDF and translated PDF in a single split-view reader tab
 - Makes the translated pane on the right the default primary pane, so the source pane follows its scrolling
 - Keeps Split-View Reader capabilities such as pane swapping
@@ -42,12 +42,12 @@ The screenshots below show the Chinese Zotero UI, which is the default presentat
 
 - Supports modern arXiv IDs such as `2401.12345v2`; legacy category-style IDs are not parsed
 - Supported well: papers whose local PDF contains an arXiv version stamp, or whose attachment/item metadata contains a complete `arXiv ID + vN`
-- Supported: HJFY source downloads, queued translation tasks, and delayed PDF URL availability
+- Supported: HJFY source preparation, queued translation tasks, and delayed PDF URL availability
 - Not yet automated: HJFY local-document upload flow, because `hjfy.top` currently requires login for uploads and task creation
 
 If HJFY requires login to create a translation task, the plugin opens the corresponding HJFY page so you can continue there.
 
-To avoid silently downloading a different revision, the exact local PDF version remains the target throughout the operation. The plugin validates the arXiv metadata and translated-file identifier returned by HJFY, and stops instead of switching to the latest revision when they do not match.
+To avoid silently downloading a different revision, the exact local PDF version remains the target throughout the operation. The plugin validates the translated-file identifier returned by HJFY, and stops instead of switching to the latest revision when it does not match.
 
 The action also stops when only a base ID is available, one metadata layer contains conflicting versions, or the PDF conflicts with its parent item. Clearly named supplementary, appendix, or slide attachments do not block automatic source selection; other PDFs with an unknown version still require the user to select the intended attachment directly.
 
@@ -69,7 +69,7 @@ Legacy translation attachments without a version are reported but not reused aut
    - determine the exact arXiv version of the local PDF
    - find an existing translation attachment for that exact version
    - otherwise query the same full version on `hjfy.top`
-   - verify the returned file version and PDF content before saving it
+   - verify the returned file-version identifier and PDF file format before saving it
    - open the source PDF and translation in split view
 
 ## Development

@@ -221,11 +221,10 @@ describe("versioned arXiv translation", function () {
   });
 
   it("keeps the exact version in every HJFY route", function () {
-    const routes = ["arxivInfo", "arxivStatus", "arxivFiles", "arxiv"] as const;
+    const routes = ["arxivStatus", "arxivFiles", "arxiv"] as const;
     assert.deepEqual(
       routes.map((route) => buildHjfyURL(route, expectedV2)),
       [
-        "https://hjfy.top/api/arxivInfo/2401.12345v2",
         "https://hjfy.top/api/arxivStatus/2401.12345v2",
         "https://hjfy.top/api/arxivFiles/2401.12345v2",
         "https://hjfy.top/arxiv/2401.12345v2",
@@ -239,6 +238,7 @@ describe("versioned arXiv translation", function () {
     assert.isFalse(isHjfyPendingMessage("下载论文源码失败"));
     assert.isFalse(isHjfyPendingMessage());
     assert.isTrue(isHjfyNotReadyMessage("译文尚未生成"));
+    assert.isTrue(isHjfyNotReadyMessage("任务尚未创建"));
   });
 
   it("waits for the Chinese PDF even after the task reports finished", function () {

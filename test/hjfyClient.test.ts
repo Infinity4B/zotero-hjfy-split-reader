@@ -8,10 +8,6 @@ const expectedReference: VersionedArxivReference = {
   id: "2401.12345v2",
 };
 
-function atomMetadata(identifier: string) {
-  return `<feed><entry><id>https://arxiv.org/abs/${identifier}</id></entry></feed>`;
-}
-
 function jsonResponse(
   payload: unknown,
   options: { status?: number; url?: string } = {},
@@ -110,94 +106,13 @@ function readyFileInfo(identifier = expectedReference.id) {
 }
 
 describe("HJFYClient", function () {
-  it("uses and verifies the exact versioned arxivInfo response", async function () {
-    const { client, requestInits, requestedUrls } = createClient([
-      jsonResponse({
-        status: 0,
-        data: {
-          hasSrc: true,
-          meta: atomMetadata(expectedReference.id),
-        },
-      }),
-    ]);
-
-    const result = await client.waitForArxivInfo(expectedReference);
-
-    assert.isTrue(result.exactVersion);
-    assert.equal(result.returnedId, expectedReference.id);
-    assert.deepEqual(requestedUrls, [
-      "https://hjfy.top/api/arxivInfo/2401.12345v2",
-    ]);
-    assert.equal(requestInits[0]?.credentials, "include");
-  });
-
-  it("falls back to base metadata without changing the target version", async function () {
-    const { client, requestedUrls } = createClient([
-      jsonResponse(
-        {
-          status: 400,
-          msg: "arxivInfo error: status not 200",
-        },
-        { status: 400 },
-      ),
-      jsonResponse({
-        status: 0,
-        data: {
-          hasSrc: true,
-          meta: atomMetadata("2401.12345v7"),
-        },
-      }),
-    ]);
-
-    const result = await client.waitForArxivInfo(expectedReference);
-
-    assert.isFalse(result.exactVersion);
-    assert.equal(result.returnedId, "2401.12345v7");
-    assert.deepEqual(requestedUrls, [
-      "https://hjfy.top/api/arxivInfo/2401.12345v2",
-      "https://hjfy.top/api/arxivInfo/2401.12345",
-    ]);
-  });
-
-  it("rejects a mismatched exact arxivInfo response", async function () {
-    const { client } = createClient([
-      jsonResponse({
-        status: 0,
-        data: {
-          hasSrc: true,
-          meta: atomMetadata("2401.12345v7"),
-        },
-      }),
-    ]);
-
-    await expectClientError(
-      client.waitForArxivInfo(expectedReference),
-      "version-mismatch",
-    );
-  });
-
-  it("does not fall back for unrelated arxivInfo version errors", async function () {
-    const { client, requestedUrls } = createClient([
-      jsonResponse({
-        status: 400,
-        msg: "version mismatch in upstream metadata",
-      }),
-    ]);
-
-    await expectClientError(
-      client.waitForArxivInfo(expectedReference),
-      "permanent-error",
-    );
-    assert.lengthOf(requestedUrls, 1);
-  });
-
-  it("rejects a translation file from another version", async function () {
+  it("rejects a translation from another version while polling", async function () {
     const { client } = createClient([
       jsonResponse({ status: 0, data: readyFileInfo("2401.12345v7") }),
     ]);
 
     await expectClientError(
-      client.fetchArxivFileInfo(expectedReference),
+      client.waitForTranslation(expectedReference),
       "version-mismatch",
     );
   });
@@ -236,9 +151,19 @@ describe("HJFYClient", function () {
     ]);
 
     await expectClientError(
-      client.waitForArxivInfo(expectedReference),
+      client.fetchArxivFileInfo(expectedReference),
       "login-required",
     );
+  });
+
+  it("includes HJFY session credentials in API requests", async function () {
+    const { client, requestInits } = createClient([
+      jsonResponse({ status: 0, data: readyFileInfo() }),
+    ]);
+
+    await client.fetchArxivFileInfo(expectedReference);
+
+    assert.equal(requestInits[0]?.credentials, "include");
   });
 
   it("retries HTTP 429 and accepts the following exact file", async function () {
@@ -326,6 +251,26 @@ describe("HJFYClient", function () {
       "retryable-error",
     );
     assert.lengthOf(requestedUrls, 3);
+  });
+
+  it("keeps polling while a new task is not ready", async function () {
+    const { client, requestedUrls } = createClient(
+      [
+        jsonResponse({ status: 1, msg: "译文尚未生成" }),
+        jsonResponse({ status: 1, msg: "任务尚未创建" }),
+        jsonResponse({ status: 0, data: readyFileInfo() }),
+      ],
+      2,
+    );
+
+    const result = await client.waitForTranslation(expectedReference);
+
+    assert.equal(result.id, expectedReference.id);
+    assert.deepEqual(requestedUrls, [
+      "https://hjfy.top/api/arxivFiles/2401.12345v2",
+      "https://hjfy.top/api/arxivStatus/2401.12345v2",
+      "https://hjfy.top/api/arxivFiles/2401.12345v2",
+    ]);
   });
 
   it("waits after finished until the exact Chinese PDF appears", async function () {

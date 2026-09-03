@@ -423,28 +423,13 @@ export class HJFYSplitFactory {
     parentItem: Zotero.Item,
     reference: VersionedArxivReference,
   ) {
-    // HJFY's versioned file endpoint can already contain a completed
-    // translation even when its arxivInfo endpoint rejects versioned IDs.
-    // Check the exact requested version before doing the metadata/source gate.
+    // Check for a completed translation before creating or resuming a task.
     const existing = await this.hjfyClient.fetchArxivFileInfo(reference);
     if (hasHjfyChinesePdf(existing)) {
       return this.savePdfAsAttachment(
         parentItem,
         await this.hjfyClient.downloadPdf(existing.zhCN),
         reference,
-      );
-    }
-
-    const arxivInfo = await this.hjfyClient.waitForArxivInfo(reference);
-    if (arxivInfo.exactVersion && !arxivInfo.hasSrc) {
-      throw new Error(
-        `arXiv ${reference.id} 没有可用的 LaTeX 源码，hjfy.top 不能直接生成翻译 PDF`,
-      );
-    }
-    if (!arxivInfo.exactVersion && !arxivInfo.hasSrc) {
-      ztoolkit.log(
-        `HJFY only returned base metadata for ${reference.id}; continuing with the exact version task`,
-        arxivInfo.returnedId,
       );
     }
 
