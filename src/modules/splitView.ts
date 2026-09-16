@@ -1,6 +1,10 @@
 import { config } from "../../package.json";
 import { getString } from "../utils/locale";
 import { getPref } from "../utils/prefs";
+import {
+  createSplitReaderAdapter,
+  forwardReaderCustomEvent,
+} from "../utils/readerEventBridge";
 
 /**
  * Split View Tab - Single tab with two side-by-side PDF readers.
@@ -3049,6 +3053,44 @@ export class SplitViewFactory {
     const isStacked = Zotero.Prefs.get("layout") === "stacked";
     const bottomPlaceholderHeight = isStacked ? 0 : null;
 
+    // Raw embedded readers do not normally participate in Zotero.Reader's
+    // extension event API. Forward their custom events through a lightweight
+    // ReaderInstance adapter so reader plugins (e.g. Translate for Zotero,
+    // Ethereal) can extend both split panes, mirroring Zotero's own
+    // ReaderInstance customEvent handling in xpcom/reader.js.
+    const readerAdapter = createSplitReaderAdapter({
+      tabID,
+      item: itemRef,
+      iframeWindow: win,
+      getInternalReader: () => self.getInternalReaderFromBrowser(browserRef),
+      addToNote: (annotations) =>
+        self.addAnnotationsToActiveNote(itemRef, annotations),
+      instanceID: `${config.addonRef}-${tabID}-${isRight ? "right" : "left"}`,
+    });
+    const customEventHandler = (event: Event) => {
+      const splitState = this.stateMap.get(tabID);
+      if (!splitState || splitState.isCleaningUp) return;
+      forwardReaderCustomEvent(
+        event,
+        readerAdapter,
+        (args) =>
+          Components.utils.cloneInto(args, win, {
+            wrapReflectors: true,
+            cloneFunctions: true,
+          }),
+        (eventData) => (Zotero.Reader as any)._dispatchEvent(eventData),
+      );
+    };
+    const splitStateForEvents = this.stateMap.get(tabID);
+    if (splitStateForEvents) {
+      this.trackEventListener(
+        splitStateForEvents,
+        win,
+        "customEvent",
+        customEventHandler as EventListener,
+      );
+    }
+
     // Create internal reader config - all callbacks defined inline, clone entire object once
     const readerConfig = {
       type: "pdf",
@@ -3101,6 +3143,9 @@ export class SplitViewFactory {
       onChangeSidebarWidth: (_width: number) => {
         // No-op for split view
       },
+      onChangeSidebarView: (view: string) => {
+        Zotero.Prefs.set("reader.lastSidebarTab", view);
+      },
       onChangeViewState: (viewState: any, _primary: boolean) => {
         // Track view state for saving to disk later
         const s = self.stateMap.get(tabID);
@@ -3123,8 +3168,8 @@ export class SplitViewFactory {
       onDeleteAnnotations: (ids: string[]) => {
         self.handleAnnotationDelete(itemRef, ids);
       },
-      onAddToNote: (_annotations: any[]) => {
-        // No-op for split view
+      onAddToNote: (annotations: any[]) => {
+        self.addAnnotationsToActiveNote(itemRef, annotations);
       },
       onOpenTagsPopup: (_id: string, _x: number, _y: number) => {
         // Tags popup not implemented for split view
@@ -3728,6 +3773,27 @@ export class SplitViewFactory {
     };
 
     Zotero.debug("Split view: annotation manager sync hooks installed");
+  }
+
+  /** Insert reader annotations into the note currently open in Context Pane. */
+  private static addAnnotationsToActiveNote(
+    item: Zotero.Item,
+    annotations: any[],
+  ) {
+    try {
+      const contextPane = (Zotero.getMainWindow() as any).ZoteroContextPane;
+      const editorInstance = contextPane?.activeEditor?.getCurrentInstance?.();
+      if (!editorInstance) return;
+
+      const prepared = annotations.map((annotation) => ({
+        ...annotation,
+        attachmentItemID: item.id,
+      }));
+      editorInstance.focus();
+      editorInstance.insertAnnotations(prepared);
+    } catch (e) {
+      Zotero.debug(`Split view: add annotation to note failed: ${e}`);
+    }
   }
 
   /**
