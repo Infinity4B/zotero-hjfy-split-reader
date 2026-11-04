@@ -4,11 +4,20 @@ import {
   hasHjfyChinesePdf,
   isHjfyNotReadyMessage,
   isHjfyPendingMessage,
+  isHjfyPreviewFile,
 } from "./hjfyState";
 
 export interface HJFYArxivStatus {
   status: string;
   info?: string;
+  pending?: boolean;
+  unlocked?: boolean;
+}
+
+export interface HJFYUnlockQuote {
+  id: string;
+  version?: string;
+  pages: number;
 }
 
 export interface HJFYFileInfo {
@@ -18,11 +27,19 @@ export interface HJFYFileInfo {
   zhCN?: string | null;
   zhCNTar?: string | null;
   isDeepSeek: boolean;
+  isPreview?: boolean;
+  unlocked?: boolean;
+  previewPageLimit?: number;
+  translatedPageCount?: number | null;
+  unlockQuote?: HJFYUnlockQuote | null;
 }
 
 export type HJFYClientErrorCode =
   | "not-ready"
   | "login-required"
+  | "insufficient-balance"
+  | "unlock-outcome-unknown"
+  | "translation-declined"
   | "retryable-error"
   | "permanent-error"
   | "version-mismatch";
@@ -30,30 +47,44 @@ export type HJFYClientErrorCode =
 export class HJFYClientError extends Error {
   public readonly code: HJFYClientErrorCode;
   public readonly httpStatus?: number;
+  // Set when HJFY has no translation yet and creating one needs a login.
+  public readonly translationMissing: boolean;
 
   constructor(
     code: HJFYClientErrorCode,
     message: string,
-    options: { httpStatus?: number } = {},
+    options: { httpStatus?: number; translationMissing?: boolean } = {},
   ) {
     super(message);
     this.code = code;
     this.httpStatus = options.httpStatus;
+    this.translationMissing = options.translationMissing ?? false;
     this.name = "HJFYClientError";
   }
 }
 
-export type HJFYRoute = "arxivStatus" | "arxivFiles" | "arxiv";
+export type HJFYRoute =
+  | "arxivStatus"
+  | "arxivFiles"
+  | "arxivTranslate"
+  | "arxivUnlock"
+  | "arxiv";
 
 interface HJFYApiPayload<T> {
-  status: number;
+  status?: number;
   data?: T;
   msg?: string;
+  error?: string;
+}
+
+interface HJFYBalancePayload {
+  balances?: Array<{ resource?: string; available?: number }>;
 }
 
 export interface HJFYClientOptions {
   fetchImplementation?: typeof fetch;
   delayImplementation?: (milliseconds: number) => Promise<void>;
+  idempotencyKeyFactory?: () => string;
   retryDelaysMs?: number[];
   pollDelayMs?: number;
   maxPollAttempts?: number;
@@ -61,9 +92,17 @@ export interface HJFYClientOptions {
 
 interface RequestOptions {
   notFoundIsNotReady?: boolean;
+  method?: "GET" | "POST";
+  jsonBody?: unknown;
+  idempotencyKey?: string;
+  noRetry?: boolean;
 }
 
 const defaultRetryDelaysMs = [500, 1500];
+
+export const hjfyHost = "hjfy.top";
+const hjfyBalanceURL = "https://hjfy.top/api/billing/balance";
+const hjfyLogoutURL = "https://hjfy.top/api/logout";
 
 export function buildHjfyURL(
   route: HJFYRoute,
@@ -73,6 +112,12 @@ export function buildHjfyURL(
   return `https://hjfy.top/${prefix}${route}/${encodeURIComponent(reference.id)}`;
 }
 
+export function buildHjfyLoginURL(reference?: VersionedArxivReference) {
+  if (!reference) return "https://hjfy.top/login";
+  const returnTo = `/arxiv/${encodeURIComponent(reference.id)}`;
+  return `https://hjfy.top/login?returnTo=${encodeURIComponent(returnTo)}`;
+}
+
 function normalizeArxivId(identifier: string) {
   return identifier.trim().toLowerCase();
 }
@@ -80,10 +125,19 @@ function normalizeArxivId(identifier: string) {
 function isLoginRequiredPayload(payload: HJFYApiPayload<unknown>) {
   return (
     payload.status === 101 ||
+    payload.error === "LOGIN_REQUIRED" ||
     /需要先登录|登录后才能|请登录|sign in|login required/i.test(
       payload.msg || "",
     )
   );
+}
+
+function defaultIdempotencyKey() {
+  const randomUUID = globalThis.crypto?.randomUUID;
+  if (typeof randomUUID === "function") {
+    return randomUUID.call(globalThis.crypto);
+  }
+  return `${Date.now().toString(16)}-${Math.random().toString(16).slice(2)}`;
 }
 
 function decodeAscii(bytes: Uint8Array) {
@@ -124,6 +178,7 @@ function defaultDelay(milliseconds: number) {
 export class HJFYClient {
   private readonly fetchImplementation: typeof fetch;
   private readonly delayImplementation: (milliseconds: number) => Promise<void>;
+  private readonly idempotencyKeyFactory: () => string;
   private readonly retryDelaysMs: number[];
   private readonly pollDelayMs: number;
   private readonly maxPollAttempts: number;
@@ -131,6 +186,8 @@ export class HJFYClient {
   constructor(options: HJFYClientOptions = {}) {
     this.fetchImplementation = options.fetchImplementation || fetch;
     this.delayImplementation = options.delayImplementation || defaultDelay;
+    this.idempotencyKeyFactory =
+      options.idempotencyKeyFactory || defaultIdempotencyKey;
     this.retryDelaysMs = options.retryDelaysMs || defaultRetryDelaysMs;
     this.pollDelayMs = options.pollDelayMs ?? 10000;
     this.maxPollAttempts = options.maxPollAttempts ?? 72;
@@ -201,10 +258,134 @@ export class HJFYClient {
     }
   }
 
-  async waitForTranslation(
+  async requestTranslation(reference: VersionedArxivReference) {
+    const payload = await this.requestJsonPayload<unknown>(
+      buildHjfyURL("arxivTranslate", reference),
+      "提交翻译任务",
+      "翻译任务",
+      {
+        method: "POST",
+        jsonBody: {},
+        idempotencyKey: this.idempotencyKeyFactory(),
+      },
+    );
+    this.assertSuccessfulAction(
+      payload,
+      "幻觉翻译要求登录后才能为这篇论文创建翻译任务",
+      "提交翻译任务失败",
+    );
+  }
+
+  async fetchTranslationBalance(): Promise<number> {
+    const payload = await this.requestJsonPayload<HJFYBalancePayload>(
+      hjfyBalanceURL,
+      "查询账号额度",
+      "账号额度",
+    );
+    this.assertSuccessfulAction(
+      payload,
+      "查询幻觉翻译账号额度需要先登录",
+      "查询账号额度失败",
+    );
+
+    const balances =
+      payload.data?.balances ?? (payload as HJFYBalancePayload).balances;
+    const available = balances?.find(
+      (balance) => balance.resource === "translation_pages",
+    )?.available;
+    if (typeof available !== "number" || !Number.isFinite(available)) {
+      throw new HJFYClientError(
+        "permanent-error",
+        "hjfy.top 返回的账号额度缺少翻译页数",
+      );
+    }
+    return available;
+  }
+
+  async logout() {
+    try {
+      // HJFY answers with a redirect; the session cookie is cleared either way.
+      await this.fetchImplementation(hjfyLogoutURL, {
+        ...this.buildRequestInit({}),
+        method: "POST",
+        redirect: "manual",
+      });
+    } catch {
+      throw new HJFYClientError(
+        "retryable-error",
+        "退出登录失败：无法连接 hjfy.top",
+      );
+    }
+  }
+
+  // Spends account quota: the request is sent at most once, and any failure
+  // that may have reached HJFY is reported as an unknown outcome.
+  async unlockArxiv(reference: VersionedArxivReference, quoteId: string) {
+    let payload: HJFYApiPayload<unknown>;
+    try {
+      payload = await this.requestJsonPayload<unknown>(
+        buildHjfyURL("arxivUnlock", reference),
+        "解锁全文译文",
+        "解锁结果",
+        {
+          method: "POST",
+          jsonBody: { quoteId },
+          idempotencyKey: this.idempotencyKeyFactory(),
+          noRetry: true,
+        },
+      );
+    } catch (error) {
+      if (
+        error instanceof HJFYClientError &&
+        (error.code === "login-required" ||
+          error.code === "insufficient-balance" ||
+          (error.httpStatus !== undefined &&
+            error.httpStatus >= 400 &&
+            error.httpStatus < 500))
+      ) {
+        throw error;
+      }
+      throw new HJFYClientError(
+        "unlock-outcome-unknown",
+        "解锁请求已发出，但没有收到明确结果，额度可能已被扣除",
+        {
+          httpStatus:
+            error instanceof HJFYClientError ? error.httpStatus : undefined,
+        },
+      );
+    }
+    this.assertSuccessfulAction(
+      payload,
+      "解锁全文译文需要先登录幻觉翻译",
+      "解锁全文译文失败",
+    );
+  }
+
+  async waitForFullTranslation(
     reference: VersionedArxivReference,
   ): Promise<HJFYFileInfo & { zhCN: string }> {
+    for (let attempt = 0; attempt < this.maxPollAttempts; attempt++) {
+      const fileInfo = await this.fetchArxivFileInfo(reference);
+      if (hasHjfyChinesePdf(fileInfo) && !isHjfyPreviewFile(fileInfo)) {
+        return fileInfo;
+      }
+      await this.delayBeforeNextPoll(attempt);
+    }
+
+    throw new HJFYClientError(
+      "retryable-error",
+      `已解锁 arXiv ${reference.id}，但全文译文尚未就绪，请稍后重试`,
+    );
+  }
+
+  // Submitting a task uses the account, so it only happens when
+  // confirmTranslationRequest resolves to true.
+  async waitForTranslation(
+    reference: VersionedArxivReference,
+    options: { confirmTranslationRequest?: () => Promise<boolean> } = {},
+  ): Promise<HJFYFileInfo & { zhCN: string }> {
     let retriggeredAfterFinished = false;
+    let translationRequested = false;
 
     for (let attempt = 0; attempt < this.maxPollAttempts; attempt++) {
       const fileInfo = await this.fetchArxivFileInfo(reference);
@@ -231,6 +412,34 @@ export class HJFYClient {
           "permanent-error",
           `hjfy.top 返回了未知任务状态: ${status.status}${status.info ? ` (${status.info})` : ""}`,
         );
+      }
+
+      if (
+        status.status === "init" &&
+        !status.pending &&
+        !translationRequested
+      ) {
+        translationRequested = true;
+        if (
+          !options.confirmTranslationRequest ||
+          !(await options.confirmTranslationRequest())
+        ) {
+          throw new HJFYClientError("translation-declined", "未提交翻译任务");
+        }
+        try {
+          await this.requestTranslation(reference);
+        } catch (error) {
+          if (
+            error instanceof HJFYClientError &&
+            error.code === "login-required"
+          ) {
+            throw new HJFYClientError("login-required", error.message, {
+              httpStatus: error.httpStatus,
+              translationMissing: true,
+            });
+          }
+          throw error;
+        }
       }
 
       if (status.status === "finished" && !retriggeredAfterFinished) {
@@ -314,6 +523,25 @@ export class HJFYClient {
     return payload.data;
   }
 
+  private assertSuccessfulAction(
+    payload: HJFYApiPayload<unknown>,
+    loginMessage: string,
+    failureMessage: string,
+  ) {
+    if (isLoginRequiredPayload(payload)) {
+      throw new HJFYClientError("login-required", loginMessage);
+    }
+    if (
+      (typeof payload.status === "number" && payload.status !== 0) ||
+      payload.error
+    ) {
+      throw new HJFYClientError(
+        "permanent-error",
+        payload.msg || payload.error || failureMessage,
+      );
+    }
+  }
+
   private assertExactReference(
     returnedId: string,
     reference: VersionedArxivReference,
@@ -367,7 +595,7 @@ export class HJFYClient {
     readBody: (response: Response) => Promise<T>,
     options: RequestOptions = {},
   ): Promise<{ response: Response; body: T }> {
-    const maximumAttempts = this.retryDelaysMs.length + 1;
+    const maximumAttempts = options.noRetry ? 1 : this.retryDelaysMs.length + 1;
 
     for (let attempt = 0; attempt < maximumAttempts; attempt++) {
       const response = await this.requestResponse(url, actionName, options);
@@ -396,15 +624,15 @@ export class HJFYClient {
     actionName: string,
     options: RequestOptions = {},
   ): Promise<Response> {
-    const maximumAttempts = this.retryDelaysMs.length + 1;
+    const maximumAttempts = options.noRetry ? 1 : this.retryDelaysMs.length + 1;
 
     for (let attempt = 0; attempt < maximumAttempts; attempt++) {
       let response: Response;
       try {
-        response = await this.fetchImplementation(url, {
-          headers: this.getRequestHeaders(),
-          credentials: "include",
-        });
+        response = await this.fetchImplementation(
+          url,
+          this.buildRequestInit(options),
+        );
       } catch {
         if (attempt < maximumAttempts - 1) {
           await this.delayImplementation(this.retryDelaysMs[attempt]);
@@ -427,6 +655,13 @@ export class HJFYClient {
         throw new HJFYClientError(
           "login-required",
           `${actionName}需要登录 hjfy.top`,
+        );
+      }
+      if (response.status === 402) {
+        throw new HJFYClientError(
+          "insufficient-balance",
+          `${actionName}失败：幻觉翻译账号额度不足`,
+          { httpStatus: response.status },
         );
       }
       if (response.status === 404 && options.notFoundIsNotReady) {
@@ -470,10 +705,20 @@ export class HJFYClient {
     }
   }
 
-  private getRequestHeaders(): HeadersInit {
-    return {
+  private buildRequestInit(options: RequestOptions): RequestInit {
+    const headers: Record<string, string> = {
       "User-Agent":
         "zotero-hjfy-split-reader (Zotero Plugin; +https://github.com/Infinity4B/zotero-hjfy-split-reader)",
     };
+    const init: RequestInit = { headers, credentials: "include" };
+    if (options.method === "POST") {
+      init.method = "POST";
+      headers["Content-Type"] = "application/json";
+      init.body = JSON.stringify(options.jsonBody ?? {});
+    }
+    if (options.idempotencyKey) {
+      headers["Idempotency-Key"] = options.idempotencyKey;
+    }
+    return init;
   }
 }

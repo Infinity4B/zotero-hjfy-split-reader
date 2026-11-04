@@ -34,3 +34,7 @@ splitview-select-first-pdf = 选择已打开的PDF或输入文字搜索
 splitview-select-second-pdf = 选择第二篇PDF或输入文字搜索，或按Esc退出
 hjfy-menu-label = 获取幻觉翻译并分屏打开
 hjfy-window-title = HJFY Split Reader
+hjfy-account-checking = 正在查询登录状态…
+hjfy-account-logged-in = 已登录，剩余 { $balance } 页额度
+hjfy-account-logged-out = 未登录
+hjfy-account-error = 无法查询登录状态：{ $message }

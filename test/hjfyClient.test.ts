@@ -1,6 +1,10 @@
 import { assert } from "chai";
 import type { VersionedArxivReference } from "../src/modules/arxivReference";
 import { HJFYClient, HJFYClientError } from "../src/modules/hjfyClient";
+import {
+  getValidUnlockQuote,
+  isHjfyPreviewFile,
+} from "../src/modules/hjfyState";
 
 const expectedReference: VersionedArxivReference = {
   baseId: "2401.12345",
@@ -105,7 +109,42 @@ function readyFileInfo(identifier = expectedReference.id) {
   };
 }
 
+function previewFileInfo() {
+  return {
+    ...readyFileInfo(),
+    zhCN: "https://example.com/2401.12345v2_zh_CN.preview.pdf?sig=1",
+    isPreview: true,
+    unlocked: false,
+    previewPageLimit: 5,
+    unlockQuote: { id: "quote-1", version: expectedReference.id, pages: 16 },
+  };
+}
+
 describe("HJFYClient", function () {
+  describe("preview detection", function () {
+    it("recognizes each preview marker", function () {
+      const preview = previewFileInfo();
+      assert.isTrue(isHjfyPreviewFile(preview));
+      assert.isTrue(isHjfyPreviewFile({ ...readyFileInfo(), isPreview: true }));
+      assert.isTrue(isHjfyPreviewFile({ ...readyFileInfo(), unlocked: false }));
+      assert.isTrue(
+        isHjfyPreviewFile({ ...readyFileInfo(), zhCN: preview.zhCN }),
+      );
+    });
+
+    it("accepts unlocked translations and ignores missing files", function () {
+      assert.isFalse(isHjfyPreviewFile(readyFileInfo()));
+      assert.isFalse(
+        isHjfyPreviewFile({
+          ...readyFileInfo(),
+          isPreview: false,
+          unlocked: true,
+        }),
+      );
+      assert.isFalse(isHjfyPreviewFile({ ...previewFileInfo(), zhCN: "" }));
+    });
+  });
+
   it("rejects a translation from another version while polling", async function () {
     const { client } = createClient([
       jsonResponse({ status: 0, data: readyFileInfo("2401.12345v7") }),
@@ -310,6 +349,246 @@ describe("HJFYClient", function () {
       "retryable-error",
     );
     assert.include(error.message, expectedReference.id);
+  });
+
+  it("requests a translation when HJFY reports an uncreated task", async function () {
+    const { client, requestedUrls, requestInits } = createClient(
+      [
+        jsonResponse({ status: 0, data: { ...readyFileInfo(), zhCN: "" } }),
+        jsonResponse({ status: 0, data: { status: "init", pending: false } }),
+        jsonResponse({ pending: true }),
+        jsonResponse({ status: 0, data: readyFileInfo() }),
+      ],
+      2,
+    );
+
+    let confirmations = 0;
+    const result = await client.waitForTranslation(expectedReference, {
+      confirmTranslationRequest: async () => {
+        confirmations++;
+        return true;
+      },
+    });
+
+    assert.equal(result.id, expectedReference.id);
+    assert.equal(confirmations, 1);
+    assert.equal(
+      requestedUrls[2],
+      "https://hjfy.top/api/arxivTranslate/2401.12345v2",
+    );
+    assert.equal(requestInits[2]?.method, "POST");
+    assert.property(requestInits[2]?.headers, "Idempotency-Key");
+  });
+
+  it("reports login-required when translation creation is unauthorized", async function () {
+    const { client } = createClient([
+      jsonResponse({ status: 0, data: { ...readyFileInfo(), zhCN: "" } }),
+      jsonResponse({ status: 0, data: { status: "init", pending: false } }),
+      jsonResponse(
+        { error: "LOGIN_REQUIRED", msg: "LOGIN_REQUIRED" },
+        { status: 401 },
+      ),
+    ]);
+
+    const error = await expectClientError(
+      client.waitForTranslation(expectedReference, {
+        confirmTranslationRequest: async () => true,
+      }),
+      "login-required",
+    );
+    assert.isTrue(error.translationMissing);
+  });
+
+  async function expectNoTranslationTask(options: {
+    confirmTranslationRequest?: () => Promise<boolean>;
+  }) {
+    const { client, requestedUrls } = createClient(
+      [
+        jsonResponse({ status: 0, data: { ...readyFileInfo(), zhCN: "" } }),
+        jsonResponse({ status: 0, data: { status: "init", pending: false } }),
+        jsonResponse({ pending: true }),
+      ],
+      2,
+    );
+
+    await expectClientError(
+      client.waitForTranslation(expectedReference, options),
+      "translation-declined",
+    );
+    assert.notInclude(
+      requestedUrls,
+      "https://hjfy.top/api/arxivTranslate/2401.12345v2",
+    );
+  }
+
+  it("does not submit a translation task when the user declines", async function () {
+    await expectNoTranslationTask({
+      confirmTranslationRequest: async () => false,
+    });
+  });
+
+  it("does not submit a translation task without a confirmation", async function () {
+    await expectNoTranslationTask({});
+  });
+
+  it("reads the translation page balance", async function () {
+    const { client, requestedUrls } = createClient([
+      jsonResponse({
+        balances: [
+          { resource: "other", available: 1 },
+          { resource: "translation_pages", available: 42 },
+        ],
+      }),
+    ]);
+
+    assert.equal(await client.fetchTranslationBalance(), 42);
+    assert.deepEqual(requestedUrls, ["https://hjfy.top/api/billing/balance"]);
+  });
+
+  it("unlocks with the quote id and an idempotency key", async function () {
+    const queuedFetch = createQueuedFetch([jsonResponse({ status: 0 })]);
+    const client = new HJFYClient({
+      fetchImplementation: queuedFetch.fetchImplementation,
+      idempotencyKeyFactory: () => "fixed-key",
+      retryDelaysMs: [],
+    });
+
+    await client.unlockArxiv(expectedReference, "quote-1");
+
+    const init = queuedFetch.requestInits[0];
+    assert.equal(
+      queuedFetch.requestedUrls[0],
+      "https://hjfy.top/api/arxivUnlock/2401.12345v2",
+    );
+    assert.equal(init?.method, "POST");
+    assert.equal(init?.body, JSON.stringify({ quoteId: "quote-1" }));
+    assert.equal(
+      (init?.headers as Record<string, string>)["Idempotency-Key"],
+      "fixed-key",
+    );
+  });
+
+  it("logs out without following the redirect", async function () {
+    const { client, requestedUrls, requestInits } = createClient([
+      new Response(null, { status: 200 }),
+    ]);
+
+    await client.logout();
+
+    assert.deepEqual(requestedUrls, ["https://hjfy.top/api/logout"]);
+    assert.equal(requestInits[0]?.method, "POST");
+    assert.equal(requestInits[0]?.redirect, "manual");
+    assert.equal(requestInits[0]?.credentials, "include");
+  });
+
+  describe("unlocking spends quota at most once", function () {
+    for (const [name, response] of [
+      ["HTTP 500", () => new Response("server error", { status: 500 })],
+      ["HTTP 429", () => new Response("rate limited", { status: 429 })],
+      ["a network error", () => new Error("connection reset")],
+      ["an unreadable body", () => responseWithFailingTextBody()],
+      [
+        "a non-JSON success body",
+        () => new Response("<html></html>", { status: 200 }),
+      ],
+    ] as const) {
+      it(`sends one request without retrying on ${name}`, async function () {
+        const { client, requestedUrls, delays } = createClient([
+          response(),
+          jsonResponse({ status: 0 }),
+          jsonResponse({ status: 0 }),
+        ]);
+
+        const error = await expectClientError(
+          client.unlockArxiv(expectedReference, "quote-1"),
+          name === "HTTP 429" ? "retryable-error" : "unlock-outcome-unknown",
+        );
+
+        assert.lengthOf(requestedUrls, 1);
+        assert.isEmpty(delays);
+        if (name === "HTTP 429") assert.equal(error.httpStatus, 429);
+      });
+    }
+
+    it("reports a server-side refusal as a definite failure", async function () {
+      const { client, requestedUrls } = createClient([
+        jsonResponse({ status: 1, msg: "报价已过期" }),
+      ]);
+
+      const error = await expectClientError(
+        client.unlockArxiv(expectedReference, "quote-1"),
+        "permanent-error",
+      );
+      assert.equal(error.message, "报价已过期");
+      assert.lengthOf(requestedUrls, 1);
+    });
+
+    it("reports a missing login as a definite failure", async function () {
+      const { client } = createClient([
+        jsonResponse(
+          { error: "LOGIN_REQUIRED", msg: "LOGIN_REQUIRED" },
+          { status: 401 },
+        ),
+      ]);
+
+      await expectClientError(
+        client.unlockArxiv(expectedReference, "quote-1"),
+        "login-required",
+      );
+    });
+  });
+
+  describe("unlock quote validation", function () {
+    const quoted = (unlockQuote: unknown) =>
+      getValidUnlockQuote(
+        { unlockQuote } as Parameters<typeof getValidUnlockQuote>[0],
+        expectedReference.id,
+      );
+
+    it("accepts a quote for exactly this version", function () {
+      assert.deepEqual(
+        quoted({ id: "q", version: "2401.12345V2", pages: 16 }),
+        { id: "q", pages: 16 },
+      );
+      assert.deepEqual(quoted({ id: "q", pages: 16 }), { id: "q", pages: 16 });
+    });
+
+    it("rejects quotes that could charge an unexpected amount", function () {
+      assert.isNull(quoted(null));
+      assert.isNull(quoted({ id: "q", version: "2401.12345v3", pages: 16 }));
+      assert.isNull(quoted({ id: "", pages: 16 }));
+      for (const pages of [0, -1, 2.5, Number.NaN, "16", Infinity]) {
+        assert.isNull(quoted({ id: "q", pages }), String(pages));
+      }
+    });
+  });
+
+  it("reports insufficient balance when unlocking returns HTTP 402", async function () {
+    const { client } = createClient([
+      jsonResponse({ msg: "余额不足" }, { status: 402 }),
+    ]);
+
+    await expectClientError(
+      client.unlockArxiv(expectedReference, "quote-1"),
+      "insufficient-balance",
+    );
+  });
+
+  it("waits until the unlocked full translation replaces the preview", async function () {
+    const { client } = createClient(
+      [
+        jsonResponse({ status: 0, data: previewFileInfo() }),
+        jsonResponse({
+          status: 0,
+          data: { ...readyFileInfo(), isPreview: false, unlocked: true },
+        }),
+      ],
+      2,
+    );
+
+    const result = await client.waitForFullTranslation(expectedReference);
+
+    assert.equal(result.zhCN, "https://example.com/translated.pdf");
   });
 
   it("rejects HTML downloads and accepts a real PDF signature", async function () {

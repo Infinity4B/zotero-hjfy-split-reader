@@ -29,6 +29,19 @@ function initZToolkit(_ztoolkit: ReturnType<typeof createZToolkit>) {
     "default",
     `chrome://${config.addonRef}/content/icons/favicon.png`,
   );
+  // The toolkit's default tick/cross PNGs no longer ship with Zotero.
+  for (const [type, icon] of [
+    ["success", "status-success"],
+    ["warning", "status-warning"],
+    ["error", "status-error"],
+    ["fail", "status-error"],
+    ["info", "status-info"],
+  ]) {
+    _ztoolkit.ProgressWindow.setIconURI(
+      type,
+      `chrome://${config.addonRef}/content/icons/${icon}.svg`,
+    );
+  }
 }
 
 import { BasicTool, unregister } from "zotero-plugin-toolkit";

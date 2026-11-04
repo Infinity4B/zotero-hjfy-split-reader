@@ -12,6 +12,7 @@ declare namespace _ZoteroTypes {
       "primaryScrollbarR": number;
       "primaryScrollbarG": number;
       "primaryScrollbarB": number;
+      "hjfyUnlockLog": string;
     };
   }
 }

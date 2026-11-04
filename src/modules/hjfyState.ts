@@ -1,4 +1,5 @@
 export type HJFYTaskStatus =
+  | "init"
   | "finished"
   | "failed"
   | "error"
@@ -9,6 +10,11 @@ export type HJFYTaskState = "ready" | "failed" | "pending" | "unknown";
 
 interface HJFYFileAvailability {
   zhCN?: unknown;
+}
+
+interface HJFYPreviewMarkers extends HJFYFileAvailability {
+  isPreview?: unknown;
+  unlocked?: unknown;
 }
 
 export function isHjfyPendingMessage(message?: string) {
@@ -38,6 +44,43 @@ export function hasHjfyChinesePdf<T extends HJFYFileAvailability>(
   return typeof fileInfo?.zhCN === "string" && Boolean(fileInfo.zhCN.trim());
 }
 
+// HJFY serves a page-limited preview until the paper is unlocked with account quota.
+export function isHjfyPreviewFile(fileInfo?: HJFYPreviewMarkers | null) {
+  if (!hasHjfyChinesePdf(fileInfo)) return false;
+  return (
+    fileInfo.isPreview === true ||
+    fileInfo.unlocked === false ||
+    /\.preview\.pdf(?:[?#]|$)/i.test(fileInfo.zhCN)
+  );
+}
+
+interface HJFYQuoteSource {
+  unlockQuote?: { id?: unknown; version?: unknown; pages?: unknown } | null;
+}
+
+// Only a quote for exactly this version, with a whole positive page count, may be spent.
+export function getValidUnlockQuote(
+  fileInfo: HJFYQuoteSource | null | undefined,
+  referenceId: string,
+) {
+  const quote = fileInfo?.unlockQuote;
+  if (!quote) return null;
+
+  const { id, version, pages } = quote;
+  if (typeof id !== "string" || !id.trim()) return null;
+  if (typeof pages !== "number" || !Number.isInteger(pages) || pages <= 0) {
+    return null;
+  }
+  if (
+    version !== undefined &&
+    (typeof version !== "string" ||
+      version.trim().toLowerCase() !== referenceId.trim().toLowerCase())
+  ) {
+    return null;
+  }
+  return { id, pages };
+}
+
 export function classifyHjfyTaskState(
   status: string,
   fileInfo?: HJFYFileAvailability | null,
@@ -46,7 +89,7 @@ export function classifyHjfyTaskState(
   if (status === "failed" || status === "error" || status === "fault") {
     return "failed" as const;
   }
-  if (status === "start" || status === "finished") {
+  if (status === "init" || status === "start" || status === "finished") {
     return "pending" as const;
   }
   return "unknown" as const;

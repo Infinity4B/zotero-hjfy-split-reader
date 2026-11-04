@@ -3,6 +3,10 @@
 /* eslint-disable */
 // @ts-nocheck
 export type FluentMessageId =
+  | 'hjfy-account-checking'
+  | 'hjfy-account-error'
+  | 'hjfy-account-logged-in'
+  | 'hjfy-account-logged-out'
   | 'hjfy-menu-label'
   | 'hjfy-window-title'
   | 'item-info-row-example-label'
@@ -18,9 +22,14 @@ export type FluentMessageId =
   | 'pref-about-desc'
   | 'pref-follow-focus'
   | 'pref-follow-focus-desc'
+  | 'pref-hjfy-account-desc'
+  | 'pref-hjfy-login'
+  | 'pref-hjfy-logout'
+  | 'pref-hjfy-refresh'
   | 'pref-scrollbar-color'
   | 'pref-scrollbar-color-desc'
   | 'pref-section-about'
+  | 'pref-section-account'
   | 'pref-section-appearance'
   | 'pref-section-basic'
   | 'pref-sync-enabled'

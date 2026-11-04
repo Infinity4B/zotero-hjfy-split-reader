@@ -34,3 +34,7 @@ splitview-select-first-pdf = Select open PDF or type to search
 splitview-select-second-pdf = Select second PDF or type to search, or Esc to exit
 hjfy-menu-label = Fetch HJFY translation and open in split view
 hjfy-window-title = HJFY Split Reader
+hjfy-account-checking = Checking login status…
+hjfy-account-logged-in = Logged in, { $balance } pages of quota left
+hjfy-account-logged-out = Not logged in
+hjfy-account-error = Cannot check login status: { $message }

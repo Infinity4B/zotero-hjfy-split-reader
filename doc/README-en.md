@@ -18,6 +18,8 @@ Fetch HJFY translations for arXiv papers and open the source PDF and translation
 - Selects the highest detected version when a parent item contains multiple source PDFs
 - Keeps the confirmed local PDF version as the immutable target and stops if HJFY returns another version
 - Keeps polling while HJFY prepares sources, queues translation tasks, or delays publishing the finished PDF URL
+- Detects HJFY preview translations (only the first 5 pages until unlocked) and never saves or reuses them as full translations
+- After you log in to HJFY, unlocks the full translation with your account quota once you confirm the page cost; until then, opens a `幻觉翻译预览` (preview) attachment
 - Opens the source PDF and translated PDF in a single split-view reader tab
 - Makes the translated pane on the right the default primary pane, so the source pane follows its scrolling
 - Keeps Split-View Reader capabilities such as pane swapping
@@ -45,13 +47,32 @@ The screenshots below show the Chinese Zotero UI, which is the default presentat
 - Supported: HJFY source preparation, queued translation tasks, and delayed PDF URL availability
 - Not yet automated: HJFY local-document upload flow, because `hjfy.top` currently requires login for uploads and task creation
 
-If HJFY requires login to create a translation task, the plugin opens the corresponding HJFY page so you can continue there.
+If HJFY requires login to create a translation task, the plugin opens the HJFY login page inside Zotero. The login is kept in Zotero, so run the action again after logging in.
+
+### Previews and full-text unlock
+
+HJFY now serves only a 5-page preview until a paper is unlocked with account quota; the number of pages charged is whatever HJFY quotes.
+
+- Not logged in: a dialog offers `View preview`, `Log in`, or `Cancel`. Viewing the preview saves and opens an attachment marked `幻觉翻译预览`; papers that already have a saved preview open it directly without asking
+- You can also log in from the plugin preferences under `HJFY Account`, which shows the login status and remaining quota and lets you log out
+- Logged in: the plugin shows the full page count and your balance and offers `Unlock full text`, `View preview`, or `Cancel`; quota is only spent when you choose to unlock. If the balance is too low, you can only view the preview or cancel; top up on the HJFY website yourself
+- Once the full translation is saved, preview attachments of the same version are moved to the Zotero trash
+- Previews saved by earlier releases (a 5-page attachment for a longer paper) are recognized as previews and no longer reused as full translations
+
+Quota safeguards:
+
+- Quota is only spent when you click `Unlock full text` in the confirmation dialog; the default button is `View preview`, so Enter or Esc never spends quota
+- The dialog shows the pages HJFY quotes, your balance, and the balance after unlocking; the quote must be for exactly the local version with a positive whole page count, otherwise unlocking is not offered
+- The unlock request is sent once and never retried automatically; if no clear result comes back, the plugin asks you to check on the website instead of reporting a failure
+- Versions HJFY already reports as unlocked, or that the plugin has submitted an unlock for, are never offered for unlocking again
+- Clicking again while the same paper is being processed does not start a second run
+- When HJFY has no translation yet, submitting a translation task also needs your confirmation, with `Cancel` as the default button. The HJFY web interface currently shows a note that submitting reserves and charges nothing, but that is interface text rather than a published pricing rule, and the plugin cannot guarantee it will not change
 
 To avoid silently downloading a different revision, the exact local PDF version remains the target throughout the operation. The plugin validates the translated-file identifier returned by HJFY, and stops instead of switching to the latest revision when it does not match.
 
 The action also stops when only a base ID is available, one metadata layer contains conflicting versions, or the PDF conflicts with its parent item. Clearly named supplementary, appendix, or slide attachments do not block automatic source selection; other PDFs with an unknown version still require the user to select the intended attachment directly.
 
-Legacy translation attachments without a version are reported but not reused automatically. The plugin fetches a new translation with a verifiable full version instead.
+Legacy translation attachments without a version cannot be verified, so the plugin first tries to fetch a new translation with a full version. If HJFY only offers a preview or requires login, the plugin opens the legacy translation instead, without asking to unlock.
 
 ## Install
 

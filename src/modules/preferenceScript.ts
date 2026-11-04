@@ -1,5 +1,16 @@
 import { config } from "../../package.json";
+import { getString } from "../utils/locale";
 import { getPref, setPref } from "../utils/prefs";
+import {
+  buildHjfyLoginURL,
+  HJFYClient,
+  HJFYClientError,
+  hjfyHost,
+} from "./hjfyClient";
+
+const hjfyClient = new HJFYClient({
+  delayImplementation: (milliseconds) => Zotero.Promise.delay(milliseconds),
+});
 
 export async function registerPrefsScripts(_window: Window) {
   // This function is called when the prefs window is opened
@@ -21,6 +32,30 @@ function updatePrefsUI() {
 
   // Initialize color preview with current pref values
   updateColorPreview(doc);
+  void updateHjfyAccountStatus(doc);
+}
+
+async function updateHjfyAccountStatus(doc: Document) {
+  const status = doc.querySelector(
+    `#zotero-prefpane-${config.addonRef}-hjfy-status`,
+  ) as HTMLElement | null;
+  if (!status) return;
+
+  status.textContent = getString("hjfy-account-checking");
+  try {
+    const balance = await hjfyClient.fetchTranslationBalance();
+    status.textContent = getString("hjfy-account-logged-in", {
+      args: { balance },
+    });
+  } catch (error) {
+    if (error instanceof HJFYClientError && error.code === "login-required") {
+      status.textContent = getString("hjfy-account-logged-out");
+      return;
+    }
+    status.textContent = getString("hjfy-account-error", {
+      args: { message: error instanceof Error ? error.message : String(error) },
+    });
+  }
 }
 
 function bindPrefEvents() {
@@ -75,6 +110,45 @@ function bindPrefEvents() {
   handleColorChange(rInput, "primaryScrollbarR");
   handleColorChange(gInput, "primaryScrollbarG");
   handleColorChange(bInput, "primaryScrollbarB");
+
+  doc
+    .querySelector(`#zotero-prefpane-${config.addonRef}-hjfy-login`)
+    ?.addEventListener("command", () => {
+      // The viewer shares Zotero's cookie jar, so the plugin's requests reuse this login.
+      Zotero.openInViewer(buildHjfyLoginURL());
+    });
+  doc
+    .querySelector(`#zotero-prefpane-${config.addonRef}-hjfy-refresh`)
+    ?.addEventListener("command", () => {
+      void updateHjfyAccountStatus(doc);
+    });
+  doc
+    .querySelector(`#zotero-prefpane-${config.addonRef}-hjfy-logout`)
+    ?.addEventListener("command", () => {
+      void logoutHjfy(doc);
+    });
+}
+
+async function logoutHjfy(doc: Document) {
+  try {
+    await hjfyClient.logout();
+  } catch (error) {
+    ztoolkit.log("HJFY logout request failed", error);
+  }
+  // Drop the local session even when the server could not be reached.
+  try {
+    for (const cookie of Services.cookies.getCookiesFromHost(hjfyHost, {})) {
+      Services.cookies.remove(
+        cookie.host,
+        cookie.name,
+        cookie.path,
+        cookie.originAttributes,
+      );
+    }
+  } catch (error) {
+    ztoolkit.log("Failed to clear HJFY cookies", error);
+  }
+  await updateHjfyAccountStatus(doc);
 }
 
 function updateColorPreview(doc: Document) {

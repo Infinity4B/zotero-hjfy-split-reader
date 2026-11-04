@@ -25,7 +25,6 @@ async function onStartup() {
   SplitViewFactory.registerTabLookup();
   SplitViewFactory.registerPrefObservers();
   SplitViewFactory.registerPromptCommands();
-  HJFYSplitFactory.registerItemMenu();
 
   BasicExampleFactory.registerPrefs();
 
@@ -55,9 +54,12 @@ async function onMainWindowLoad(win: _ZoteroTypes.MainWindow): Promise<void> {
   win.MozXULElement.insertFTLIfNeeded(
     `${addon.data.config.addonRef}-mainWindow.ftl`,
   );
+  HJFYSplitFactory.registerItemMenu(win);
 }
 
 async function onMainWindowUnload(win: Window): Promise<void> {
+  HJFYSplitFactory.unregisterItemMenu(win);
+
   // Clean up split-view resources when the main window is unloaded.
   // This prevents keeping references to DOM nodes and windows that
   // become "dead objects" after Zotero is closed and reopened.
@@ -69,6 +71,9 @@ async function onMainWindowUnload(win: Window): Promise<void> {
 }
 
 function onShutdown(): void {
+  for (const win of Zotero.getMainWindows()) {
+    HJFYSplitFactory.unregisterItemMenu(win);
+  }
   SplitViewFactory.unregisterAll();
   ztoolkit.unregisterAll();
   addon.data.dialog?.window?.close();
