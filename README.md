@@ -1,13 +1,28 @@
 # HJFY Split Reader
 
+**在 Zotero 里右键一篇 arXiv 论文，自动获取 [幻觉翻译（HJFY）](https://hjfy.top) 的中文译文，并与原文 PDF 在同一个标签页里左右分屏阅读。**
+
 [![Zotero 8/9/10](https://img.shields.io/badge/Zotero-8%2F9%2F10-green?style=flat-square&logo=zotero&logoColor=CC2936)](https://www.zotero.org/)
-[![CI](https://github.com/Infinity4B/zotero-hjfy-split-reader/actions/workflows/ci.yml/badge.svg)](https://github.com/Infinity4B/zotero-hjfy-split-reader/actions/workflows/ci.yml)
-[![Release](https://github.com/Infinity4B/zotero-hjfy-split-reader/actions/workflows/release.yml/badge.svg)](https://github.com/Infinity4B/zotero-hjfy-split-reader/actions/workflows/release.yml)
+[![稳定版](https://img.shields.io/github/v/release/Infinity4B/zotero-hjfy-split-reader?style=flat-square&label=%E7%A8%B3%E5%AE%9A%E7%89%88&color=brightgreen)](https://github.com/Infinity4B/zotero-hjfy-split-reader/releases/latest)
+[![测试版](https://img.shields.io/github/v/release/Infinity4B/zotero-hjfy-split-reader?include_prereleases&style=flat-square&label=%E6%B5%8B%E8%AF%95%E7%89%88&color=orange)](https://github.com/Infinity4B/zotero-hjfy-split-reader/releases)
+[![下载量](https://img.shields.io/github/downloads/Infinity4B/zotero-hjfy-split-reader/latest/hjfy-split-reader.xpi?style=flat-square&label=%E7%A8%B3%E5%AE%9A%E7%89%88%E4%B8%8B%E8%BD%BD&color=blue)](https://github.com/Infinity4B/zotero-hjfy-split-reader/releases/latest)
+[![CI](https://img.shields.io/github/actions/workflow/status/Infinity4B/zotero-hjfy-split-reader/ci.yml?branch=main&style=flat-square&label=CI&logo=githubactions&logoColor=white)](https://github.com/Infinity4B/zotero-hjfy-split-reader/actions/workflows/ci.yml)
+[![License](https://img.shields.io/github/license/Infinity4B/zotero-hjfy-split-reader?style=flat-square)](LICENSE)
+[![Stars](https://img.shields.io/github/stars/Infinity4B/zotero-hjfy-split-reader?style=flat-square&logo=github)](https://github.com/Infinity4B/zotero-hjfy-split-reader/stargazers)
 [![Using Zotero Plugin Template](https://img.shields.io/badge/Using-Zotero%20Plugin%20Template-blue?style=flat-square&logo=github)](https://github.com/windingwind/zotero-plugin-template)
 
-用于 Zotero 8 / 9 / 10 的插件：获取 arXiv 论文在 HJFY 上的译文 PDF，并把原文 PDF 与译文 PDF 以分屏方式并排打开。
+适用于 Zotero 8 / 9 / 10。插件从本地 PDF 识别具体的 arXiv 版本（如 `2401.12345v2`），只获取版本一致的译文，保存为条目附件后自动分屏打开；右侧是译文，左侧原文跟随滚动。
 
 [简体中文](README.md) | [English](doc/README-en.md)
+
+> [!IMPORTANT]
+> **v0.2.0-rc1 测试版已发布，欢迎试用和反馈。**
+>
+> 本文档按 v0.2.0-rc1 编写。HJFY 现在未解锁时只提供前 5 页译文，稳定版 v0.1.7 无法区分这种预览版；测试版新增了预览识别、登录 HJFY 账号和用额度解锁全文（标注 🧪 的部分）。
+>
+> - 下载测试版：[hjfy-split-reader.xpi（v0.2.0-rc1）](https://github.com/Infinity4B/zotero-hjfy-split-reader/releases/download/v0.2.0-rc1/hjfy-split-reader.xpi)，安装方法与稳定版相同，直接覆盖安装即可
+> - 稳定版的自动更新**不会**推送测试版，需要手动安装一次
+> - 遇到问题请到 [Issues](https://github.com/Infinity4B/zotero-hjfy-split-reader/issues) 反馈，测试版反馈稳定后会发布 v0.2.0 正式版
 
 ## 功能
 
@@ -18,8 +33,8 @@
 - 同一条目有多个版本的原文 PDF 时，右键主条目会自动选择版本号最高的原文
 - 本地 PDF 的版本一旦确认便不会自动切换；HJFY 返回其他版本时停止下载
 - HJFY 任务排队、源码准备及 PDF 地址延迟生成时，自动等待并继续轮询
-- 识别 HJFY 的预览版译文（未解锁时仅前 5 页），不会把它当作完整译文保存或复用
-- 登录 HJFY 后，可在确认扣除的页数后使用账号额度解锁全文；未解锁时先以「幻觉翻译预览」附件分屏打开
+- 🧪 识别 HJFY 的预览版译文（未解锁时仅前 5 页），不会把它当作完整译文保存或复用
+- 🧪 登录 HJFY 后，可在确认扣除的页数后使用账号额度解锁全文；未解锁时先以「幻觉翻译预览」附件分屏打开
 - 自动将原文 PDF 和译文 PDF 以单标签页分屏方式打开
 - 默认以右侧译文窗格为主窗格，左侧原文跟随译文滚动
 - 保留分屏阅读器的交换左右窗格等能力
@@ -47,7 +62,9 @@
 
 如果 HJFY 对当前论文要求登录后才能创建翻译任务，插件会在 Zotero 内打开 HJFY 登录页。登录状态保存在 Zotero 中，登录后重新执行即可。
 
-### 预览版与解锁全文
+### 🧪 预览版与解锁全文
+
+> 本节功能需要 [v0.2.0-rc1 测试版](https://github.com/Infinity4B/zotero-hjfy-split-reader/releases/tag/v0.2.0-rc1)。
 
 HJFY 目前未解锁时只提供前 5 页的预览版译文，全文需要使用账号额度解锁，扣除的页数以 HJFY 的报价为准。
 
@@ -74,8 +91,10 @@ HJFY 目前未解锁时只提供前 5 页的预览版译文，全文需要使用
 
 ## 安装
 
-1. 打开 [Releases](https://github.com/Infinity4B/zotero-hjfy-split-reader/releases)
-2. 下载最新的 `.xpi`
+1. 下载 `.xpi`：
+   - 测试版（推荐，支持预览识别与解锁全文）：[v0.2.0-rc1](https://github.com/Infinity4B/zotero-hjfy-split-reader/releases/download/v0.2.0-rc1/hjfy-split-reader.xpi)
+   - 稳定版：[最新稳定版](https://github.com/Infinity4B/zotero-hjfy-split-reader/releases/latest)，所有版本见 [Releases](https://github.com/Infinity4B/zotero-hjfy-split-reader/releases)
+2. 如果浏览器把 `.xpi` 当作 Firefox 扩展处理，请右键链接选择“另存为”
 3. 在 Zotero 中打开 `工具` -> `插件`
 4. 点击右上角齿轮 -> `Install Plugin From File...`
 5. 选择下载的 `.xpi`

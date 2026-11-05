@@ -1,13 +1,28 @@
 # HJFY Split Reader
 
+**Right-click an arXiv paper in Zotero to fetch its Chinese translation from [HJFY](https://hjfy.top) and read it side by side with the source PDF in one split-view tab.**
+
 [![Zotero 8/9/10](https://img.shields.io/badge/Zotero-8%2F9%2F10-green?style=flat-square&logo=zotero&logoColor=CC2936)](https://www.zotero.org/)
-[![CI](https://github.com/Infinity4B/zotero-hjfy-split-reader/actions/workflows/ci.yml/badge.svg)](https://github.com/Infinity4B/zotero-hjfy-split-reader/actions/workflows/ci.yml)
-[![Release](https://github.com/Infinity4B/zotero-hjfy-split-reader/actions/workflows/release.yml/badge.svg)](https://github.com/Infinity4B/zotero-hjfy-split-reader/actions/workflows/release.yml)
+[![Stable](https://img.shields.io/github/v/release/Infinity4B/zotero-hjfy-split-reader?style=flat-square&label=stable&color=brightgreen)](https://github.com/Infinity4B/zotero-hjfy-split-reader/releases/latest)
+[![Pre-release](https://img.shields.io/github/v/release/Infinity4B/zotero-hjfy-split-reader?include_prereleases&style=flat-square&label=pre-release&color=orange)](https://github.com/Infinity4B/zotero-hjfy-split-reader/releases)
+[![Downloads](https://img.shields.io/github/downloads/Infinity4B/zotero-hjfy-split-reader/latest/hjfy-split-reader.xpi?style=flat-square&label=stable%20downloads&color=blue)](https://github.com/Infinity4B/zotero-hjfy-split-reader/releases/latest)
+[![CI](https://img.shields.io/github/actions/workflow/status/Infinity4B/zotero-hjfy-split-reader/ci.yml?branch=main&style=flat-square&label=CI&logo=githubactions&logoColor=white)](https://github.com/Infinity4B/zotero-hjfy-split-reader/actions/workflows/ci.yml)
+[![License](https://img.shields.io/github/license/Infinity4B/zotero-hjfy-split-reader?style=flat-square)](../LICENSE)
+[![Stars](https://img.shields.io/github/stars/Infinity4B/zotero-hjfy-split-reader?style=flat-square&logo=github)](https://github.com/Infinity4B/zotero-hjfy-split-reader/stargazers)
 [![Using Zotero Plugin Template](https://img.shields.io/badge/Using-Zotero%20Plugin%20Template-blue?style=flat-square&logo=github)](https://github.com/windingwind/zotero-plugin-template)
 
-Fetch HJFY translations for arXiv papers and open the source PDF and translation side by side in Zotero 8 / 9 / 10.
+For Zotero 8 / 9 / 10. The plugin detects the exact arXiv version of your local PDF (for example `2401.12345v2`), fetches only a translation of that same version, saves it as a child attachment, and opens both in split view: the translation on the right, with the source on the left following its scrolling.
 
 [简体中文](../README.md) | [English](README-en.md)
+
+> [!IMPORTANT]
+> **v0.2.0-rc1 pre-release is out. Please try it and send feedback.**
+>
+> This document describes v0.2.0-rc1. HJFY now serves only the first 5 pages until a paper is unlocked, and stable v0.1.7 cannot tell such previews apart. The pre-release adds preview detection, HJFY account login, and full-text unlock with your quota (sections marked 🧪).
+>
+> - Download the pre-release: [hjfy-split-reader.xpi (v0.2.0-rc1)](https://github.com/Infinity4B/zotero-hjfy-split-reader/releases/download/v0.2.0-rc1/hjfy-split-reader.xpi). Install it the same way as the stable release, over your existing installation
+> - Automatic updates of the stable release do **not** deliver pre-releases, so install it manually once
+> - Please report problems in [Issues](https://github.com/Infinity4B/zotero-hjfy-split-reader/issues). v0.2.0 final will follow once pre-release feedback settles
 
 ## Features
 
@@ -18,8 +33,8 @@ Fetch HJFY translations for arXiv papers and open the source PDF and translation
 - Selects the highest detected version when a parent item contains multiple source PDFs
 - Keeps the confirmed local PDF version as the immutable target and stops if HJFY returns another version
 - Keeps polling while HJFY prepares sources, queues translation tasks, or delays publishing the finished PDF URL
-- Detects HJFY preview translations (only the first 5 pages until unlocked) and never saves or reuses them as full translations
-- After you log in to HJFY, unlocks the full translation with your account quota once you confirm the page cost; until then, opens a `幻觉翻译预览` (preview) attachment
+- 🧪 Detects HJFY preview translations (only the first 5 pages until unlocked) and never saves or reuses them as full translations
+- 🧪 After you log in to HJFY, unlocks the full translation with your account quota once you confirm the page cost; until then, opens a `幻觉翻译预览` (preview) attachment
 - Opens the source PDF and translated PDF in a single split-view reader tab
 - Makes the translated pane on the right the default primary pane, so the source pane follows its scrolling
 - Keeps Split-View Reader capabilities such as pane swapping
@@ -49,7 +64,9 @@ The screenshots below show the Chinese Zotero UI, which is the default presentat
 
 If HJFY requires login to create a translation task, the plugin opens the HJFY login page inside Zotero. The login is kept in Zotero, so run the action again after logging in.
 
-### Previews and full-text unlock
+### 🧪 Previews and full-text unlock
+
+> This section requires the [v0.2.0-rc1 pre-release](https://github.com/Infinity4B/zotero-hjfy-split-reader/releases/tag/v0.2.0-rc1).
 
 HJFY now serves only a 5-page preview until a paper is unlocked with account quota; the number of pages charged is whatever HJFY quotes.
 
@@ -76,8 +93,10 @@ Legacy translation attachments without a version cannot be verified, so the plug
 
 ## Install
 
-1. Go to [Releases](https://github.com/Infinity4B/zotero-hjfy-split-reader/releases)
-2. Download the latest `.xpi`
+1. Download the `.xpi`:
+   - Pre-release (recommended; supports preview detection and full-text unlock): [v0.2.0-rc1](https://github.com/Infinity4B/zotero-hjfy-split-reader/releases/download/v0.2.0-rc1/hjfy-split-reader.xpi)
+   - Stable: [latest stable release](https://github.com/Infinity4B/zotero-hjfy-split-reader/releases/latest); all versions are on [Releases](https://github.com/Infinity4B/zotero-hjfy-split-reader/releases)
+2. If your browser treats the `.xpi` as a Firefox extension, right-click the link and choose "Save Link As..."
 3. In Zotero, open `Tools` -> `Plugins`
 4. Click the gear icon -> `Install Plugin From File...`
 5. Select the downloaded `.xpi`
